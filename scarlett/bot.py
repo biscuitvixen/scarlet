@@ -7,13 +7,12 @@ from discord.ext import commands
 
 from .config import Settings
 from .db import Database
-from .llm import LLM
 from .version import describe, package_version
 
 log = logging.getLogger(__name__)
 
-# always loaded. music and chat each need a backing service, so they are
-# added only when theirs is switched on
+# always loaded. music needs a backing service, so it is added only when
+# switched on
 COGS = [
     "scarlett.cogs.general",
     "scarlett.cogs.timestamps",
@@ -29,7 +28,6 @@ class Scarlett(commands.Bot):
         super().__init__(command_prefix="!", intents=intents)
         self.settings = settings
         self.db: Database | None = None
-        self.llm: LLM | None = LLM(settings) if settings.llm_enabled else None
         self.lavalink_task: asyncio.Task | None = None
         self.version = describe(package_version(), settings.git_sha)
 
@@ -38,8 +36,6 @@ class Scarlett(commands.Bot):
         cogs = list(COGS)
         if self.settings.music_enabled:
             cogs.append("scarlett.cogs.music")
-        if self.settings.llm_enabled:
-            cogs.append("scarlett.cogs.chat")
         for cog in cogs:
             await self.load_extension(cog)
             log.info("loaded %s", cog)

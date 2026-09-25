@@ -50,15 +50,6 @@ class General(commands.Cog):
             ),
             inline=False,
         )
-        # shown even when the llm is off, the wording hints she might be quiet
-        embed.add_field(
-            name="If I'm feeling talkative",
-            value=(
-                "When my brain's switched on, mention me or reply and I'll "
-                "chat back, and I'll pipe up on my own now and then too."
-            ),
-            inline=False,
-        )
         embed.add_field(
             name="Bits and bobs",
             value="`/ping` to check I'm awake · `/help` for this",

@@ -1,25 +1,23 @@
 # scarlett
 
-A friendly, growing utility bot for Discord. Right now she handles cross-timezone timestamps and voice-channel music, with more tools on the way. Runs anywhere Docker does, no GPU needed. She can also take on a chatty personality if you want one, but that part is entirely optional.
+A friendly, growing utility bot for Discord. Right now she handles cross-timezone timestamps and voice-channel music, with more tools on the way. Runs anywhere Docker does, no GPU needed.
 
 Features:
 
-- **Timestamp coordination**: spots time phrases in messages ("friday at 7pm") and replies with Discord timestamp markup (`<t:unix:F>` and `<t:unix:R>`), so everyone sees the time in their own zone. Parsing is deterministic, so it needs no LLM. Users register a timezone with `/tz` (autocompleted), or say the zone in the message itself ("22:00 CET"), which works for everyone reading whether or not the author has registered one. `/time <phrase>` converts on demand, with none of the quiet-hours limits the listener applies. `/timecode <phrase>` hands back the raw markup privately, in a code block, for pasting into your own message; an optional style picks one of Discord's seven formats.
+- **Timestamp coordination**: spots time phrases in messages ("friday at 7pm") and replies with Discord timestamp markup (`<t:unix:F>` and `<t:unix:R>`), so everyone sees the time in their own zone. Parsing is deterministic. Users register a timezone with `/tz` (autocompleted), or say the zone in the message itself ("22:00 CET"), which works for everyone reading whether or not the author has registered one. `/time <phrase>` converts on demand, with none of the quiet-hours limits the listener applies. `/timecode <phrase>` hands back the raw markup privately, in a code block, for pasting into your own message; an optional style picks one of Discord's seven formats.
 - **Self-assignable roles**: buttons on a message that hand out roles when clicked, so members pick their own pronouns, game pings or colours without anyone with Manage Roles being awake. Panels are built with `/roles` and come in three flavours: pick as many as you like, pick exactly one, or click-to-opt-in with no take-backs. See [Reaction roles](#reaction-roles).
 - **Music**: plays audio in voice channels via Lavalink. `/play` takes a link or a search term; `/skip`, `/stop`, `/pause`, `/volume`, `/shuffle`, `/loop`, `/queue` and `/nowplaying` round it out. She manages a queue and leaves on her own once the channel empties or nothing has played for a while.
-- **Personality chat** (optional, off by default): if you want it, she can chat back in her own voice. This is the one feature that needs an extra service, so it lives in its own section at the end; everything above works without it.
 
 Plus `/ping` to check she's alive and `/help` to list everything. More tools are on the way, so treat the list above as what she does today rather than the ceiling.
 
 ## Architecture
 
-Two CPU-only containers, defined in `docker-compose.yml`, cover everything the utility features need. A third is only pulled in if you opt into the personality:
+Two CPU-only containers, defined in `docker-compose.yml`, cover everything:
 
 | Service  | What it does |
 |----------|--------------|
 | bot      | The discord.py bot itself. CPU only. |
 | lavalink | Audio server the bot controls via wavelink for music playback. CPU only. |
-| vllm     | Optional, off by default. Serves the LLM behind the personality; needs a GPU. See [Optional: the personality](#optional-the-personality). |
 
 ## Setup
 
@@ -32,7 +30,7 @@ cp .env.example .env   # fill in DISCORD_TOKEN, and GUILD_ID for instant command
 docker compose up -d --build
 ```
 
-That is the whole utility bot up and running. Giving her a personality is a separate, optional step covered at the end.
+That is the whole bot up and running.
 
 ## Reaction roles
 
@@ -172,26 +170,6 @@ PY
 
 Then leave `GUILD_ID` blank so it stays clean.
 
-## Optional: the personality
-
-Everything above is the whole bot. This section is only for the extra, off-by-default feature where she chats back in her own voice, and it is the only part that pulls in an LLM. Skip it entirely and nothing else changes.
-
-When switched on, she replies when mentioned or replied to and occasionally interjects on her own, only in whitelisted guilds (`CHAT_GUILD_IDS`) and with per-user rate limiting. Her character lives in `personality.md`, reread on every reply, so you can edit it live without a rebuild.
-
-She talks to any OpenAI-compatible endpoint (the bundled `vllm` container, a separate machine, Ollama, or a hosted API), so the model can live wherever you have the hardware for it. Set `LLM_ENABLED` and `LLM_BASE_URL` in `.env`:
-
-| Mode | `LLM_ENABLED` | `LLM_BASE_URL` | Start with |
-|------|---------------|----------------|-----------|
-| Off (default) | `false` | ignored | `docker compose up -d` |
-| Query a remote host | `true` | `http://<host>:8000/v1` | `docker compose up -d` (bot side) |
-| Bot and model together | `true` | `http://vllm:8000/v1` (default) | `docker compose --profile llm up -d` |
-
-For the remote mode, run just the model on the other machine with `docker compose --profile llm up -d vllm`.
-
-**Security**: vLLM has no auth by default and ignores `LLM_API_KEY` unless it is started with `--api-key`. Publishing port `8000` to anything wider than a trusted LAN/VPN gives anyone free use of the machine. Keep the two machines on the same LAN (or a Tailscale/WireGuard network), or set a secret in `LLM_API_KEY` and add `--api-key <secret>` to the `vllm serve` command.
-
-**Running the model locally**: the bundled `vllm` service needs an NVIDIA GPU and the container toolkit (Docker passes the GPU through via the `deploy.resources` reservation in the compose file). Weights are cached in the `hf-cache` volume, so a restart does not re-download them. On a DGX Spark specifically: it is aarch64 (GB10), so `vllm` must use NVIDIA's arm64 build (check [NGC](https://catalog.ngc.nvidia.com) for the current tag and update `docker-compose.yml` if needed; the other images are already multi-arch), and DGX OS ships the container toolkit so the GPU reservation works out of the box.
-
 ## Running her locally
 
 Docker is the deployment story, but rebuilding an image to try a code
@@ -204,7 +182,7 @@ python3 -m venv .venv
 
 set -a && . ./.env && set +a           # config comes from the environment
 export DB_PATH=./data/scarlett.db      # the default path lives inside the image
-export MUSIC_ENABLED=false LLM_ENABLED=false
+export MUSIC_ENABLED=false
 .venv/bin/python -m scarlett
 ```
 
@@ -220,8 +198,7 @@ real one.
 is not running outside compose, and wavelink retries an unreachable node
 forever, so leaving it on buries everything you are actually trying to
 read under reconnect warnings. Off, the music cog is never loaded and
-the node is never created. `LLM_ENABLED=false` does the same for the
-chat cog. Roles, timestamps and `/help` need neither.
+the node is never created. Roles, timestamps and `/help` need nothing.
 
 Tests need nothing running at all:
 
