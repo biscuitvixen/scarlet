@@ -391,3 +391,37 @@ def test_until_without_a_past_verb_is_still_live(text):
 def test_a_direct_ask_can_still_convert_a_past_time():
     (m,) = extract_times("we were up until 3am", LONDON, NOW, skip_past=False)
     assert m.phrase == "3am", "skip_past=False should hand back the past time"
+
+
+# dateparser runs a phrase on into a following conjunction, and the quoted
+# text is what people see, so it has to read as what they wrote
+@pytest.mark.parametrize(
+    "text, phrase, day, hour",
+    [
+        # 11am is behind the pinned 14:00 now, so it rolls to the next day
+        ("my mate was up until 11 am and he's not even tired", "11 am", 2, 11),
+        ("lets do 8pm and then raid", "8pm", 1, 20),
+        ("8pm or so", "8pm", 1, 20),
+        ("hop on at 8pm?", "at 8pm", 1, 20),
+    ],
+)
+def test_the_quoted_phrase_stops_at_the_time(text, phrase, day, hour):
+    (m,) = extract_times(text, LONDON, NOW, skip_past=False)
+    assert m.phrase == phrase, f"{text!r} should quote {phrase!r}, got {m.phrase!r}"
+    assert int(m.when.timestamp()) == unix(2026, 7, day, hour, 0), (
+        f"trimming must not move the time for {text!r}"
+    )
+
+
+def test_a_leading_on_that_belongs_to_a_date_is_kept():
+    (m,) = extract_times("on friday at 7pm", LONDON, NOW)
+    assert m.phrase == "on friday at 7pm", "the 'on' here is part of the date"
+
+
+# search_dates reads a spaced "11 am" as the first of November. The plain
+# parser gets it right, which is why each phrase is reread on its own
+def test_a_spaced_meridiem_is_a_time_not_a_month():
+    (m,) = extract_times("11 am works for me", LONDON, NOW)
+    assert int(m.when.timestamp()) == unix(2026, 7, 2, 11, 0), (
+        "11 am should be tomorrow morning, not November"
+    )

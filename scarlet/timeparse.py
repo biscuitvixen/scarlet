@@ -15,6 +15,7 @@ from datetime import datetime, timedelta, timezone, tzinfo
 from typing import NamedTuple
 from zoneinfo import ZoneInfo
 
+import dateparser
 from dateparser.search import search_dates
 
 # Everything here logs at DEBUG. Dropping a phrase is the normal outcome,
@@ -147,9 +148,25 @@ ZONE_NEAR = 4
 
 MAX_MATCHES = 3
 
+# dateparser's search_dates runs a phrase on into the next word when that
+# word could start another date expression, so "11 am and he's" comes back
+# as "11 am and". The datetime is right, only the quoted text is off, so
+# these are cut from the ends before the phrase is shown to anyone
+PHRASE_JUNK_TAIL = re.compile(r"(?:\s+(?:and|or|then|but|so|nd))+$", re.IGNORECASE)
+# "hop on at 8pm" comes back as "on at 8pm", the "on" belonging to "hop on"
+PHRASE_JUNK_HEAD = re.compile(r"^on\s+(?=at\b)", re.IGNORECASE)
+
 # anything closer than this is happening "now-ish" for everyone in the
 # conversation, converting it just adds noise
 MIN_LEAD = timedelta(hours=1)
+
+
+def _trim_phrase(phrase: str) -> str:
+    """Cut the words dateparser tacked on that are not part of the time."""
+    trimmed = PHRASE_JUNK_HEAD.sub("", PHRASE_JUNK_TAIL.sub("", phrase.strip()))
+    if trimmed != phrase.strip():
+        log.debug("trimmed %r to %r", phrase, trimmed)
+    return trimmed
 
 
 def _brief(pairs) -> str:
@@ -412,25 +429,23 @@ def extract_times(
         # time converted to UTC against RELATIVE_BASE, so the base must be
         # naive UTC (its own default), not wall-clock in the target zone
         base = now.astimezone(timezone.utc).replace(tzinfo=None)
-        found = search_dates(
-            text,
-            languages=["en"],
-            settings={
-                "PREFER_DATES_FROM": "future",
-                "RETURN_AS_TIMEZONE_AWARE": True,
-                "TIMEZONE": str(tz),
-                "RELATIVE_BASE": base,
-                # search_dates runs full-text language detection first and
-                # drops the message outright if it can't name a language.
-                # A message that is only a time ("7pm", "21:00?") has no
-                # detectable language, and the languages= list above is only
-                # consulted as a fallback when it holds more than one entry,
-                # so those never reached the parser at all. This is the
-                # documented way to say "assume English when unsure".
-                "DEFAULT_LANGUAGES": ["en"],
-            },
-        )
+        settings = {
+            "PREFER_DATES_FROM": "future",
+            "RETURN_AS_TIMEZONE_AWARE": True,
+            "TIMEZONE": str(tz),
+            "RELATIVE_BASE": base,
+            # search_dates runs full-text language detection first and
+            # drops the message outright if it can't name a language.
+            # A message that is only a time ("7pm", "21:00?") has no
+            # detectable language, and the languages= list above is only
+            # consulted as a fallback when it holds more than one entry,
+            # so those never reached the parser at all. This is the
+            # documented way to say "assume English when unsure".
+            "DEFAULT_LANGUAGES": ["en"],
+        }
+        found = search_dates(text, languages=["en"], settings=settings)
     else:
+        settings = {}
         found = None
     # the parser's raw answer, before any of our filtering. This is the line
     # that says whether she went quiet because nothing was said or because
@@ -444,7 +459,18 @@ def extract_times(
         if len(matches) == max_matches:
             log.debug("hit the %d match cap, ignoring the rest", max_matches)
             break
-        phrase = phrase.strip()
+        phrase = _trim_phrase(phrase)
+        # search_dates only locates the phrase. Its value comes from the
+        # plain parser, which reads the trimmed phrase on its own: the
+        # search path reads a spaced "11 am" as the first of November, and
+        # a trailing conjunction can push a time to midnight
+        reread = dateparser.parse(phrase, languages=["en"], settings=settings)
+        if reread is None:
+            log.debug("dropped %r, does not parse on its own", phrase)
+            continue
+        if reread != when:
+            log.debug("reread %r as %s, search had %s", phrase, reread, when)
+        when = reread
         start = text.find(phrase, cursor)
         if start >= 0:
             cursor = start + len(phrase)
