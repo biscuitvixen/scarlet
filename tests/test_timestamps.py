@@ -3,6 +3,8 @@ from datetime import datetime
 from unittest.mock import AsyncMock, Mock
 from zoneinfo import ZoneInfo
 
+import pytest
+
 from scarlet.cogs.timestamps import (
     ASKED_MIN_LEAD,
     DEFAULT_STYLES,
@@ -10,6 +12,7 @@ from scarlet.cogs.timestamps import (
     Timestamps,
     _render,
     _render_codes,
+    is_nudge,
 )
 from scarlet.timeparse import TimeMatch
 
@@ -18,20 +21,48 @@ WHEN = datetime(2026, 7, 1, 19, 0, tzinfo=LONDON)
 UNIX = int(WHEN.timestamp())
 
 
+BOT_ID = 999
+
+
 def make_cog(tz_name=None):
     bot = Mock()
+    bot.user = Mock()
+    bot.user.id = BOT_ID
     bot.db = Mock()
     bot.db.get_timezone = AsyncMock(return_value=tz_name)
     return Timestamps(bot)
 
 
-def make_message(content, author_id=1, is_bot=False):
+def make_message(content, author_id=1, is_bot=False, message_id=0, mentions=()):
     message = Mock()
+    message.id = message_id
     message.content = content
     message.author.id = author_id
     message.author.bot = is_bot
+    message.mentions = list(mentions)
+    message.reference = None
     message.reply = AsyncMock()
     return message
+
+
+def make_channel(history):
+    """A channel whose history() yields the given messages, newest first."""
+
+    async def _history(**kwargs):
+        for message in history:
+            yield message
+
+    channel = Mock()
+    channel.id = 42
+    channel.history = _history
+    return channel
+
+
+def bot_reply_to(message_id):
+    reply = make_message("converted", author_id=BOT_ID, is_bot=True)
+    reply.reference = Mock()
+    reply.reference.message_id = message_id
+    return reply
 
 
 def run(coro):
@@ -195,3 +226,82 @@ def test_every_discord_style_is_offered():
     assert set(TIMESTAMP_STYLES) == set("tTdDfFR"), (
         "style picker drifted from Discord's seven timestamp styles"
     )
+
+
+@pytest.mark.parametrize(
+    "content, mentioned",
+    [
+        ("Scarlet?", False),
+        ("scarlett", False),
+        ("hey scarlet convert that", False),
+        ("scarlet pls", False),
+        ("oi scarlett!!", False),
+        ("Scarlet, again?", False),
+        ("<@999>", True),
+        ("<@999> ?", True),
+    ],
+)
+def test_a_bare_call_of_her_name_is_a_nudge(content, mentioned):
+    assert is_nudge(content, mentioned), f"{content!r} should read as a nudge"
+
+
+@pytest.mark.parametrize(
+    "content, mentioned",
+    [
+        ("scarlet 8pm?", False),
+        ("scarlet is great", False),
+        ("<@999> what time", True),
+        ("the scarlet witch", False),
+        ("8pm?", False),
+    ],
+)
+def test_her_name_inside_a_sentence_is_not_a_nudge(content, mentioned):
+    assert not is_nudge(content, mentioned), f"{content!r} should not be a nudge"
+
+
+def nudge_in(history, tz_name="Europe/London"):
+    cog = make_cog(tz_name=tz_name)
+    nudge = make_message("Scarlet?", author_id=2, message_id=100)
+    nudge.channel = make_channel(history)
+    run(cog.on_message(nudge))
+    return nudge
+
+
+def test_a_nudge_converts_the_latest_message_with_a_time_in_it():
+    past = make_message("we were up until 3am", message_id=10)
+    chatter = make_message("lmao same", author_id=3, message_id=11)
+    nudge = nudge_in([chatter, past])
+    past.reply.assert_called_once()
+    assert "<t:" in reply_text(past), "the conversion should sit on the message"
+    nudge.reply.assert_not_called()
+    chatter.reply.assert_not_called()
+
+
+def test_a_nudge_skips_a_message_she_already_answered():
+    older = make_message("raid at 8pm", message_id=10)
+    answered = make_message("dinner at 7pm", message_id=11)
+    nudge_in([bot_reply_to(11), answered, older])
+    answered.reply.assert_not_called()
+    older.reply.assert_called_once()
+    assert "<t:" in reply_text(older), "the unanswered one should convert"
+
+
+def test_a_nudge_with_nothing_to_point_at_says_so():
+    chatter = make_message("lmao same", message_id=11)
+    nudge = nudge_in([chatter])
+    nudge.reply.assert_called_once()
+    assert "/time" in reply_text(nudge), "should point at /time as the fallback"
+    chatter.reply.assert_not_called()
+
+
+def test_a_nudge_prompts_the_author_for_a_zone_even_inside_the_cooldown():
+    cog = make_cog(tz_name=None)
+    first = make_message("i was up until 7am", message_id=10)
+    run(cog.on_message(first))
+    first.reply.assert_not_called()  # past tense, the listener stays quiet
+    cog.last_prompted[first.author.id] = 1e12  # as if nagged a moment ago
+    nudge = make_message("scarlet?", author_id=2, message_id=100)
+    nudge.channel = make_channel([first])
+    run(cog.on_message(nudge))
+    first.reply.assert_called_once()
+    assert "/tz" in reply_text(first), "a nudge should re-ask for the zone"
