@@ -53,6 +53,26 @@ TIME_OF_DAY = re.compile(
     re.IGNORECASE | re.VERBOSE,
 )
 
+# A time is read as already over when one of these sits within PAST_NEAR
+# characters of it. Bare "until" is left out on purpose: "on until 9pm" is
+# a running event and converting its end still helps, so "until" only
+# counts with a past-tense verb or "up" in front of it
+PAST_MARKER = re.compile(
+    r"""
+      \b(?:was|were|been|stayed|up)\b[^.!?\n]{0,15}?\b(?:until|till|til)\b
+    | \b(?:last\s+night|yesterday|this\s+morning|earlier|ago)\b
+    | \b(?:woke(?:\s+up)?|slept|went\s+to\s+(?:bed|sleep)|got\s+(?:up|home|in|back)
+         |crashed|finished|ended|arrived|left)\b
+    """,
+    re.IGNORECASE | re.VERBOSE,
+)
+# how far a past marker may sit from a time and still be about it, in
+# characters. Covers "up until 3:30" and "3:30 last night" with a couple of
+# filler words, but not a marker at the other end of a long message
+PAST_NEAR = 24
+# punctuation a past marker does not reach across
+CLAUSE_BREAK = re.compile(r"[,.;!?\n]")
+
 # Compact 24h time ("1900") is only trusted with context ("at 1900",
 # "1900hrs"), a bare 4-digit number is usually a year or just a number.
 # dateparser reads "1900" as a year too, so rewrite to 19:00 before parsing.
@@ -190,6 +210,40 @@ def _next_occurrence(when: datetime, now: datetime, tz: tzinfo) -> datetime:
     return placed
 
 
+def live_times(text: str) -> list[re.Match]:
+    """The time-of-day matches in text that are not beside a past marker.
+
+    This is the listener's gate: a message whose only times are already
+    over ("we were up until 3:30 last night") should earn neither a
+    conversion nor a prompt to set a timezone. A direct ask should not go
+    through it, the person asking knows what they want converted.
+    """
+    past = [m.span() for m in PAST_MARKER.finditer(text)]
+
+    def beside(t: re.Match) -> str | None:
+        # a marker claims only the nearest time on either side of it: the
+        # gap between them must be short, hold no other time, and not cross
+        # a clause boundary, so "up until 3am, lets do 8pm" keeps the 8pm
+        for ps, pe in past:
+            gap = text[pe : t.start()] if pe <= t.start() else text[t.end() : ps]
+            if (
+                len(gap) <= PAST_NEAR
+                and not CLAUSE_BREAK.search(gap)
+                and not TIME_OF_DAY.search(gap)
+            ):
+                return text[ps:pe]
+        return None
+
+    live = []
+    for t in TIME_OF_DAY.finditer(text):
+        marker = beside(t)
+        if marker is None:
+            live.append(t)
+        else:
+            log.debug("dropped %r, beside %r so already over", t.group(0), marker)
+    return live
+
+
 def explicit_zone(text: str) -> StatedZone | None:
     """Return the timezone a message states for its own times, if any.
 
@@ -214,9 +268,7 @@ def explicit_zone(text: str) -> StatedZone | None:
         if beside_a_time(*m.span()):
             sign, hours, minutes = m.groups()
             delta = timedelta(hours=int(hours), minutes=int(minutes or 0))
-            return StatedZone(
-                m.group(0), timezone(-delta if sign == "-" else delta)
-            )
+            return StatedZone(m.group(0), timezone(-delta if sign == "-" else delta))
 
     for m in ZONE_NAME.finditer(text):
         if beside_a_time(*m.span()):
@@ -231,6 +283,7 @@ def extract_times(
     *,
     min_lead: timedelta = MIN_LEAD,
     max_matches: int = MAX_MATCHES,
+    skip_past: bool = True,
 ) -> list[TimeMatch]:
     """Return up to max_matches concrete times found in text.
 
@@ -243,6 +296,9 @@ def extract_times(
     a channel is unsolicited; someone who asked outright should pass a
     zero min_lead, they know what they want converted.
 
+    skip_past leaves out times that read as already over (see
+    live_times). Off for a direct ask, for the same reason as the limits.
+
     now anchors relative phrases ("in 45 minutes") and future preference,
     mainly so tests can pin it. Defaults to the current time.
     """
@@ -252,6 +308,17 @@ def extract_times(
     if not TIME_OF_DAY.search(text):
         log.debug("no time of day in %r", text)
         return []
+    if skip_past:
+        keep = {m.span() for m in live_times(text)}
+        if not keep:
+            log.debug("every time in %r is already over", text)
+            return []
+        # blank the past ones so neither the relative pass nor dateparser
+        # sees them. Same length, so spans stay valid against the original
+        text = TIME_OF_DAY.sub(
+            lambda m: m.group(0) if m.span() in keep else " " * len(m.group(0)),
+            text,
+        )
 
     # a zone the author spelled out beats the one they registered, that is
     # the whole point of typing it
@@ -323,8 +390,10 @@ def extract_times(
     def relative(m: re.Match) -> str:
         amount = int(m.group(1))
         unit = m.group(2).lower()
-        delta = timedelta(hours=amount) if unit.startswith("h") else timedelta(
-            minutes=amount
+        delta = (
+            timedelta(hours=amount)
+            if unit.startswith("h")
+            else timedelta(minutes=amount)
         )
         when = now + delta
         unix = int(when.timestamp())

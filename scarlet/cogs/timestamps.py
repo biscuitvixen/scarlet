@@ -15,7 +15,13 @@ import discord
 from discord import app_commands
 from discord.ext import commands
 
-from ..timeparse import TIME_OF_DAY, TimeMatch, explicit_zone, extract_times
+from ..timeparse import (
+    TIME_OF_DAY,
+    TimeMatch,
+    explicit_zone,
+    extract_times,
+    live_times,
+)
 
 log = logging.getLogger(__name__)
 
@@ -91,9 +97,17 @@ class Timestamps(commands.Cog):
         if message.author.bot or not message.content:
             return
         # cheap gate so most messages never touch the db
-        match = TIME_OF_DAY.search(message.content)
-        if "<t:" in message.content or not match:
+        if "<t:" in message.content or not TIME_OF_DAY.search(message.content):
             return
+        live = live_times(message.content)
+        if not live:
+            log.info(
+                "time in %r from %s is already over, staying quiet",
+                message.content,
+                message.author.id,
+            )
+            return
+        match = live[0]
 
         # a message that names its own zone ("22:00 CET") reads the same for
         # everyone, so it converts without knowing who wrote it
