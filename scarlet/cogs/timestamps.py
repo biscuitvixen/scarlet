@@ -2,7 +2,7 @@
 
 <t:unix:F> renders as an absolute time in each viewer's own timezone and
 <t:unix:R> as a relative one, so "friday at 7pm" becomes unambiguous for
-the whole server. Parsing lives in scarlett.timeparse; this cog handles
+the whole server. Parsing lives in scarlet.timeparse; this cog handles
 the Discord side and the per-user timezone registry.
 """
 

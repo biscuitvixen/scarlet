@@ -3,7 +3,7 @@ from datetime import datetime
 from unittest.mock import AsyncMock, Mock
 from zoneinfo import ZoneInfo
 
-from scarlett.cogs.timestamps import (
+from scarlet.cogs.timestamps import (
     ASKED_MIN_LEAD,
     DEFAULT_STYLES,
     TIMESTAMP_STYLES,
@@ -11,7 +11,7 @@ from scarlett.cogs.timestamps import (
     _render,
     _render_codes,
 )
-from scarlett.timeparse import TimeMatch
+from scarlet.timeparse import TimeMatch
 
 LONDON = ZoneInfo("Europe/London")
 WHEN = datetime(2026, 7, 1, 19, 0, tzinfo=LONDON)

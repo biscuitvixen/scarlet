@@ -2,9 +2,9 @@
 
 The bot has no HTTP surface, so "is it healthy" really means "is she still
 connected to the gateway and is the event loop still turning". The Health cog
-(scarlett.cogs.health) stamps the current time into HEARTBEAT_PATH every
+(scarlet.cogs.health) stamps the current time into HEARTBEAT_PATH every
 HEARTBEAT_INTERVAL seconds while the bot is ready; Docker's HEALTHCHECK runs
-`python -m scarlett.health`, which exits non-zero once that stamp goes stale.
+`python -m scarlet.health`, which exits non-zero once that stamp goes stale.
 
 Kept dependency-free on purpose so the healthcheck process starts fast and
 doesn't drag discord.py in just to read one file.
@@ -17,7 +17,7 @@ from pathlib import Path
 # ephemeral by design: a fresh container has no heartbeat and only reads
 # healthy once she connects, and a crash leaves the last stamp to go stale
 # rather than lingering across restarts the way a file on the data volume would
-HEARTBEAT_PATH = Path("/tmp/scarlett.heartbeat")
+HEARTBEAT_PATH = Path("/tmp/scarlet.heartbeat")
 HEARTBEAT_INTERVAL = 30.0
 # three missed beats. loose enough to ride out discord.py resuming a dropped
 # session on its own without the check flapping to unhealthy

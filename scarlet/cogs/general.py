@@ -64,7 +64,7 @@ class General(commands.Cog):
     @app_commands.default_permissions(manage_guild=True)
     async def version(self, interaction: discord.Interaction) -> None:
         await interaction.response.send_message(
-            f"scarlett {self.bot.version}", ephemeral=True
+            f"scarlet {self.bot.version}", ephemeral=True
         )
 
 

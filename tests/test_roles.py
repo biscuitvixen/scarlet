@@ -3,8 +3,8 @@ import dataclasses
 
 import pytest
 
-from scarlett.db import Database
-from scarlett.roles import (
+from scarlet.db import Database
+from scarlet.roles import (
     MAX_ENTRIES,
     Panel,
     PanelEntry,
@@ -353,7 +353,7 @@ def build_bot():
     import discord
     from discord.ext import commands
 
-    from scarlett.cogs.roles import Roles
+    from scarlet.cogs.roles import Roles
 
     async def main():
         bot = commands.Bot(command_prefix="!", intents=discord.Intents.default())
@@ -368,7 +368,7 @@ def test_the_cog_registers_under_the_name_buttons_look_it_up_by():
     # GroupCog takes its cog name from the same argument as the command
     # group, so a mismatch here leaves every button click unable to reach
     # the shared reply tracker, silently and without an error
-    from scarlett.cogs.roles import COG_NAME
+    from scarlet.cogs.roles import COG_NAME
 
     bot, cog = build_bot()
     assert bot.get_cog(COG_NAME) is cog, (
@@ -380,7 +380,7 @@ def test_the_cog_registers_under_the_name_buttons_look_it_up_by():
 def test_the_admin_group_is_gated_on_manage_roles():
     import discord
 
-    from scarlett.cogs.roles import COG_NAME
+    from scarlet.cogs.roles import COG_NAME
 
     bot, _ = build_bot()
     group = next(c for c in bot.tree.get_commands() if c.name == COG_NAME)
@@ -404,7 +404,7 @@ def test_the_admin_group_is_gated_on_manage_roles():
     ],
 )
 def test_hex_colours_are_read(raw, expected):
-    from scarlett.roles import parse_hex_colour
+    from scarlet.roles import parse_hex_colour
 
     assert parse_hex_colour(raw) == expected, f"{raw!r} read as the wrong colour"
 
@@ -414,7 +414,7 @@ def test_hex_colours_are_read(raw, expected):
     ["", "blurple", "#ff88", "#ff88000", "#gggggg", "rgb(1,2,3)", "#ff-800"],
 )
 def test_things_that_are_not_hex_colours_are_refused(raw):
-    from scarlett.roles import parse_hex_colour
+    from scarlet.roles import parse_hex_colour
 
     assert parse_hex_colour(raw) is None, f"{raw!r} should not have parsed"
 
@@ -422,7 +422,7 @@ def test_things_that_are_not_hex_colours_are_refused(raw):
 def test_named_colours_resolve_without_hardcoded_values():
     import discord
 
-    from scarlett.cogs.roles import resolve_colour
+    from scarlet.cogs.roles import resolve_colour
 
     assert resolve_colour("blurple") == discord.Colour.blurple().value, (
         "a named colour should come from the library's palette"

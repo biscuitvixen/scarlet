@@ -1,3 +1,7 @@
+# Pinned so the volume names below do not follow the checkout directory:
+# a renamed folder would otherwise start her on fresh, empty volumes
+name: scarlet
+
 services:
   bot:
     build: .
@@ -24,7 +28,7 @@ services:
       # Lavalink runs as uid 322 but docker creates fresh volumes as root,
       # so on first run on a new machine the plugin download hits
       # "Permission denied" until:
-      #   docker run --rm -v scarlett_ai_lavalink-plugins:/p alpine chown -R 322:322 /p
+      #   docker run --rm -v scarlet_lavalink-plugins:/p alpine chown -R 322:322 /p
       - lavalink-plugins:/opt/Lavalink/plugins
     expose:
       - "2333"

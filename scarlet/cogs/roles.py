@@ -1,6 +1,6 @@
 """Self-assignable roles as button panels.
 
-Panel logic lives in scarlett.roles; this cog is the Discord side of it.
+Panel logic lives in scarlet.roles; this cog is the Discord side of it.
 The admin surface is a /roles group gated behind Manage Roles, and the
 member-facing side is buttons on a posted message.
 

@@ -3,7 +3,7 @@ from zoneinfo import ZoneInfo
 
 import pytest
 
-from scarlett.timeparse import TIME_OF_DAY, explicit_zone, extract_times
+from scarlet.timeparse import TIME_OF_DAY, explicit_zone, extract_times
 
 LONDON = ZoneInfo("Europe/London")
 CHICAGO = ZoneInfo("America/Chicago")

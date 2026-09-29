@@ -1,6 +1,6 @@
 import pytest
 
-from scarlett.cogs.music import _format_duration, _progress_bar
+from scarlet.cogs.music import _format_duration, _progress_bar
 
 
 @pytest.mark.parametrize(

@@ -3,7 +3,7 @@ import asyncio
 import discord
 import pytest
 
-from scarlett.ephemeral import EphemeralReplies, should_reuse
+from scarlet.ephemeral import EphemeralReplies, should_reuse
 
 ALICE = ("alice", 1)
 BOB = ("bob", 1)

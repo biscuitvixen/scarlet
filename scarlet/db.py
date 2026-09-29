@@ -113,7 +113,7 @@ class Database:
         )
         await self.conn.commit()
 
-    # role panels. these satisfy scarlett.roles.PanelStore structurally, so
+    # role panels. these satisfy scarlet.roles.PanelStore structurally, so
     # the roles cog never sees this class
 
     async def get_panel(self, guild_id: int, name: str) -> Panel | None:

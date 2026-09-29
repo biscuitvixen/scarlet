@@ -7,14 +7,14 @@ RUN apt-get update \
 
 WORKDIR /app
 COPY pyproject.toml ./
-COPY scarlett ./scarlett
+COPY scarlet ./scarlet
 RUN pip install --no-cache-dir .
 
 # /app/data holds the sqlite db, mounted as a volume in compose
-RUN useradd --create-home scarlett \
+RUN useradd --create-home scarlet \
     && mkdir /app/data \
-    && chown scarlett:scarlett /app/data
-USER scarlett
+    && chown scarlet:scarlet /app/data
+USER scarlet
 
 # The commit this image was built from, for the version she reports at
 # runtime. Declared here rather than higher up because a build arg
@@ -27,6 +27,6 @@ ENV GIT_SHA=$GIT_SHA
 # while the bot is ready; this fails once it goes stale. start-period covers
 # login and the first gateway connect before failures start counting
 HEALTHCHECK --interval=30s --timeout=5s --start-period=45s --retries=3 \
-    CMD ["python", "-m", "scarlett.health"]
+    CMD ["python", "-m", "scarlet.health"]
 
-CMD ["python", "-m", "scarlett"]
+CMD ["python", "-m", "scarlet"]

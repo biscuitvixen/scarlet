@@ -14,14 +14,14 @@ log = logging.getLogger(__name__)
 # always loaded. music needs a backing service, so it is added only when
 # switched on
 COGS = [
-    "scarlett.cogs.general",
-    "scarlett.cogs.timestamps",
-    "scarlett.cogs.roles",
-    "scarlett.cogs.health",
+    "scarlet.cogs.general",
+    "scarlet.cogs.timestamps",
+    "scarlet.cogs.roles",
+    "scarlet.cogs.health",
 ]
 
 
-class Scarlett(commands.Bot):
+class Scarlet(commands.Bot):
     def __init__(self, settings: Settings):
         intents = discord.Intents.default()
         intents.message_content = True
@@ -35,7 +35,7 @@ class Scarlett(commands.Bot):
         self.db = await Database.open(self.settings.db_path)
         cogs = list(COGS)
         if self.settings.music_enabled:
-            cogs.append("scarlett.cogs.music")
+            cogs.append("scarlet.cogs.music")
         for cog in cogs:
             await self.load_extension(cog)
             log.info("loaded %s", cog)

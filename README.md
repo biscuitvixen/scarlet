@@ -1,4 +1,4 @@
-# scarlett
+# scarlet
 
 A friendly, growing utility bot for Discord. Right now she handles cross-timezone timestamps and voice-channel music, with more tools on the way. Runs anywhere Docker does, no GPU needed.
 
@@ -39,7 +39,7 @@ reactions. Reactions were the only interactive surface bots had before
 2021; buttons give real labels, a private reply to whoever clicked, and
 no need for the message-reaction intent.
 
-Scarlett never records who holds which role. Discord already knows, and
+Scarlet never records who holds which role. Discord already knows, and
 is the only authority on it, so nothing here can drift out of step with
 the role list and nobody loses a role if the database is thrown away.
 
@@ -54,7 +54,7 @@ writes every change to the server audit log.
 These are the once-off Discord-side jobs, and between them they account
 for essentially every way a role panel fails.
 
-1. **Put Scarlett's role above the roles she hands out.** Server
+1. **Put Scarlet's role above the roles she hands out.** Server
    Settings > Roles, drag her up. A bot can only manage roles strictly
    below its own highest role. This is the big one.
 2. **Give her Manage Roles**, server-wide. It is not a per-channel
@@ -63,7 +63,7 @@ for essentially every way a role panel fails.
    2FA for moderator actions, the account that owns the bot application
    needs 2FA switched on or every role change fails.
 4. **Make a `#roles` channel.** Deny `@everyone` Send Messages so it
-   stays nothing but panels, and allow Scarlett View Channel, Send
+   stays nothing but panels, and allow Scarlet View Channel, Send
    Messages and Embed Links. She does not need Manage Messages.
 5. **Create the roles.** If a role only exists to unlock a channel, give
    it no permissions at all and set the visibility on the channel
@@ -126,8 +126,23 @@ Playback runs through the `lavalink` container using the [youtube-source](https:
 - **Plugin volume ownership.** Lavalink runs as uid 322, but Docker creates the `lavalink-plugins` volume as root, so the first plugin download fails with a permission error until you fix it:
 
   ```sh
-  docker run --rm -v scarlett_ai_lavalink-plugins:/p alpine chown -R 322:322 /p
+  docker run --rm -v scarlet_lavalink-plugins:/p alpine chown -R 322:322 /p
   ```
+
+- **Volumes from before the rename.** The compose project is pinned to
+  `scarlet`, so her volumes are `scarlet_bot-data` and
+  `scarlet_lavalink-plugins`. A deployment made when the repo was
+  `scarlett_ai` has them under that prefix, and a plain `docker compose
+  up` on the new checkout starts her on fresh, empty ones. Copy the old
+  data across once, with the stack stopped:
+
+  ```sh
+  docker volume create scarlet_bot-data
+  docker run --rm -v scarlett_ai_bot-data:/from -v scarlet_bot-data:/to alpine cp -a /from/. /to/
+  ```
+
+  The same two lines with `lavalink-plugins` in place of `bot-data`
+  save re-downloading the plugins.
 
 - **YouTube OAuth**, which is the reliable cure for "sign in to confirm you're not a bot" errors. Start Lavalink with `YOUTUBE_OAUTH_REFRESH_TOKEN` blank in `.env` and watch its logs (`docker compose logs -f lavalink`): it prints a device-link URL and code. Authorise with a **burner** Google account (never your main one), then copy the refresh token it logs into `YOUTUBE_OAUTH_REFRESH_TOKEN` in `.env` and restart. The token is injected into `lavalink/application.yml` via the compose file, so it never lives in a tracked file.
 
@@ -181,9 +196,9 @@ python3 -m venv .venv
 .venv/bin/pip install -e '.[dev]'
 
 set -a && . ./.env && set +a           # config comes from the environment
-export DB_PATH=./data/scarlett.db      # the default path lives inside the image
+export DB_PATH=./data/scarlet.db      # the default path lives inside the image
 export MUSIC_ENABLED=false
-.venv/bin/python -m scarlett
+.venv/bin/python -m scarlet
 ```
 
 The `set -a` line is the part that catches people out. Under Docker,
@@ -220,7 +235,7 @@ being built. The published images also carry it in their OCI labels, so
 ```sh
 docker inspect --format \
   '{{index .Config.Labels "org.opencontainers.image.revision"}}' \
-  ghcr.io/<owner>/scarlett_ai:latest
+  ghcr.io/<owner>/scarlet:latest
 ```
 
 Running from a checkout nothing sets it, so pass it yourself if you want

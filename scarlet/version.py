@@ -22,7 +22,7 @@ from importlib.metadata import version as installed_version
 
 # the version is read from the installed package rather than repeated here,
 # so the one in the project metadata stays the only copy
-PACKAGE = "scarlett"
+PACKAGE = "scarlet"
 
 UNKNOWN = "unknown"
 

@@ -1,6 +1,6 @@
 """Writes the liveness heartbeat the container healthcheck reads.
 
-See scarlett.health for the file it stamps and how Docker consumes it.
+See scarlet.health for the file it stamps and how Docker consumes it.
 """
 
 import logging

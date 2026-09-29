@@ -34,7 +34,7 @@ class Settings(BaseSettings):
     # disconnecting on her own
     music_idle_timeout: int = 300
 
-    db_path: str = "/app/data/scarlett.db"
+    db_path: str = "/app/data/scarlet.db"
 
     # the commit the image was built from, baked in by the Dockerfile. empty
     # running from a checkout, where you already know what you are running

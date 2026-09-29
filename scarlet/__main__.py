@@ -1,6 +1,6 @@
 import logging
 
-from .bot import Scarlett
+from .bot import Scarlet
 from .config import Settings
 
 
@@ -20,9 +20,9 @@ def main() -> None:
             "LOG_LEVEL=%r isn't a level name, staying at INFO", settings.log_level
         )
     else:
-        logging.getLogger("scarlett").setLevel(level)
+        logging.getLogger("scarlet").setLevel(level)
 
-    bot = Scarlett(settings)
+    bot = Scarlet(settings)
     bot.run(settings.discord_token, log_handler=None)
 
 

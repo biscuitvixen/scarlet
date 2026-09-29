@@ -1,4 +1,4 @@
-from scarlett.health import MAX_STALENESS, check, write_heartbeat
+from scarlet.health import MAX_STALENESS, check, write_heartbeat
 
 
 def test_fresh_heartbeat_passes(tmp_path):

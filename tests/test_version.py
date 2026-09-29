@@ -1,6 +1,6 @@
 import pytest
 
-from scarlett.version import describe, short_sha
+from scarlet.version import describe, short_sha
 
 
 @pytest.mark.parametrize(
@@ -35,7 +35,7 @@ def test_the_version_command_is_gated_to_managers():
     import discord
     from discord.ext import commands
 
-    from scarlett.cogs.general import General
+    from scarlet.cogs.general import General
 
     async def main():
         bot = commands.Bot(command_prefix="!", intents=discord.Intents.none())
