@@ -1,12 +1,11 @@
 [project]
 name = "scarlett"
 version = "0.3.0"
-description = "Extensible Discord utility bot (timestamp coordination, self-assignable roles, music) with an optional local LLM personality"
+description = "Extensible Discord utility bot (timestamp coordination, self-assignable roles, music)"
 requires-python = ">=3.11"
 dependencies = [
     "discord.py[voice]>=2.4",
     "wavelink>=3.4",
-    "openai>=1.60",
     "pydantic-settings>=2.6",
     "aiosqlite>=0.20",
     "dateparser>=1.2",
