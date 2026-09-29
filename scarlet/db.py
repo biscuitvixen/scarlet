@@ -1,10 +1,18 @@
 from __future__ import annotations
 
+import logging
 from pathlib import Path
 
 import aiosqlite
 
 from .roles import Panel, PanelEntry, PanelMode
+
+log = logging.getLogger(__name__)
+
+# the file name from before the package was renamed. A data volume from
+# that era holds the timezones and role panels under this name, and
+# opening the new name beside it would start from nothing
+LEGACY_DB_NAME = "scarlett.db"
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS user_timezones (
@@ -79,13 +87,32 @@ async def _add_missing_columns(conn: aiosqlite.Connection) -> None:
             await conn.execute(f"ALTER TABLE {table} ADD COLUMN {column} {decl}")
 
 
+def _adopt_legacy_file(path: Path) -> None:
+    """Move a database left under the old name into place, once.
+
+    Only when the new name does not exist yet: if both are present the
+    new one is the live one and the old is left alone for a human to
+    look at. The rollback journal comes along if a crash left one, so
+    sqlite can still finish that recovery on the moved file.
+    """
+    legacy = path.with_name(LEGACY_DB_NAME)
+    if path.exists() or not legacy.exists():
+        return
+    legacy.replace(path)
+    journal = legacy.with_name(legacy.name + "-journal")
+    if journal.exists():
+        journal.replace(path.with_name(path.name + "-journal"))
+    log.warning("moved %s to %s, its name from before the rename", legacy, path)
+
+
 class Database:
     def __init__(self, conn: aiosqlite.Connection):
         self.conn = conn
 
     @classmethod
-    async def open(cls, path: str) -> "Database":
+    async def open(cls, path: str) -> Database:
         Path(path).parent.mkdir(parents=True, exist_ok=True)
+        _adopt_legacy_file(Path(path))
         conn = await aiosqlite.connect(path)
         # per-connection and off by default, so without it the panel entry
         # cascade silently leaves orphaned rows behind
