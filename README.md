@@ -4,7 +4,7 @@ A friendly, growing utility bot for Discord. Right now she handles cross-timezon
 
 Features:
 
-- **Timestamp coordination**: spots time phrases in messages ("friday at 7pm") and replies with Discord timestamp markup (`<t:unix:F>` and `<t:unix:R>`), so everyone sees the time in their own zone. Parsing is deterministic. Users register a timezone with `/tz` (autocompleted), or say the zone in the message itself ("22:00 CET"), which works for everyone reading whether or not the author has registered one. `/time <phrase>` converts on demand, with none of the quiet-hours limits the listener applies. `/timecode <phrase>` hands back the raw markup privately, in a code block, for pasting into your own message; an optional style picks one of Discord's seven formats.
+- **Timestamp coordination**: turns a time someone wrote ("friday at 7pm") into Discord timestamp markup (`<t:unix:F>` and `<t:unix:R>`), so everyone sees it in their own zone. She only does it when asked, never on her own: @mention her in the message, put a `!` in front of the time (`!8pm`), right-click any message and pick Apps > Convert times, or just say "Scarlet?" and she converts the latest time-ish message. See [Asking for a timestamp](#asking-for-a-timestamp). Parsing is deterministic. Users register a timezone with `/tz` (autocompleted), or say the zone in the message itself ("22:00 CET"), which works whether or not the author has registered one. `/time <phrase>` converts a phrase of your own, and `/timecode <phrase>` hands back the raw markup privately, in a code block, for pasting into your own message; an optional style picks one of Discord's seven formats.
 - **Self-assignable roles**: buttons on a message that hand out roles when clicked, so members pick their own pronouns, game pings or colours without anyone with Manage Roles being awake. Panels are built with `/roles` and come in three flavours: pick as many as you like, pick exactly one, or click-to-opt-in with no take-backs. See [Reaction roles](#reaction-roles).
 - **Music**: plays audio in voice channels via Lavalink. `/play` takes a link or a search term; `/skip`, `/stop`, `/pause`, `/volume`, `/shuffle`, `/loop`, `/queue` and `/nowplaying` round it out. She manages a queue and leaves on her own once the channel empties or nothing has played for a while.
 
@@ -31,6 +31,33 @@ docker compose up -d --build
 ```
 
 That is the whole bot up and running.
+
+## Asking for a timestamp
+
+She never converts a time unprompted. An earlier version replied to
+every clock time in chat, and the people living with it asked for that
+to stop: most times in conversation are not plans, and a bot that
+answers "we were up until 3am" with a countdown is noise. So every
+conversion starts with someone asking, in whichever of these ways is
+closest to hand:
+
+| Ask | What happens |
+|-----|--------------|
+| `@Scarlet raid at 8pm?` | Converts the times in that message. |
+| `raid at !8pm?` | A `!` directly before a time marks it. Only marked times convert, so "up until 3am, !8pm tonight" gives just the 8pm. |
+| Apps > Convert times | Right-click (long-press on mobile) any message, however old. The conversion is a public reply on it; anything that goes wrong is said privately to whoever asked. |
+| `Scarlet?` | After a message she did not convert: she looks back over the last few messages, takes the newest one with a time in it that she has not already answered, and converts that. |
+| `/time 8pm friday` | Converts a phrase of your own, not a message. |
+
+Times are read in the author's timezone, the one they set with `/tz`,
+unless the message states its own ("22:00 CET"). If the author has no
+zone on file she asks them to set one, except from the context menu,
+where she tells the person who asked instead so nobody is pinged on
+someone else's behalf.
+
+The nudge and the context menu need the Read Message History
+permission in the channel. Without it she says so rather than
+staying silent.
 
 ## Reaction roles
 
