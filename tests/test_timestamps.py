@@ -73,42 +73,6 @@ def reply_text(message):
     return message.reply.call_args.args[0]
 
 
-def test_prompt_quotes_the_matched_phrase():
-    # the message that started all this: a bare "noon" with no tz on file
-    cog = make_cog(tz_name=None)
-    msg = make_message("I had shawarma for breakfast at noon, walked back")
-    run(cog.on_message(msg))
-    msg.reply.assert_called_once()
-    text = reply_text(msg)
-    assert '"noon"' in text
-    assert "/tz" in text
-
-
-def test_prompt_preserves_original_casing():
-    cog = make_cog(tz_name=None)
-    msg = make_message("lunch at NOON tomorrow")
-    run(cog.on_message(msg))
-    assert '"NOON"' in reply_text(msg)
-
-
-def test_prompt_quotes_a_clock_time():
-    cog = make_cog(tz_name=None)
-    msg = make_message("dinner at 7:30 pm sound good?")
-    run(cog.on_message(msg))
-    assert '"7:30 pm"' in reply_text(msg)
-
-
-def test_prompt_is_rate_limited_per_user():
-    cog = make_cog(tz_name=None)
-    first = make_message("noon", author_id=5)
-    second = make_message("midnight", author_id=5)
-    run(cog.on_message(first))
-    run(cog.on_message(second))
-    first.reply.assert_called_once()
-    # inside PROMPT_COOLDOWN, the second mention stays quiet
-    second.reply.assert_not_called()
-
-
 def test_bot_messages_are_ignored():
     cog = make_cog(tz_name=None)
     msg = make_message("meet at 7pm", is_bot=True)
@@ -132,42 +96,13 @@ def test_preformatted_timestamp_is_ignored():
     msg.reply.assert_not_called()
 
 
-def test_known_timezone_replies_with_conversion():
+def test_a_plain_message_with_a_time_in_it_gets_no_reply():
+    # the users asked for this: she converts only when called
     cog = make_cog(tz_name="Europe/London")
     msg = make_message("dinner at 7pm tomorrow")
     run(cog.on_message(msg))
-    msg.reply.assert_called_once()
-    text = reply_text(msg)
-    assert "<t:" in text
-    # the reply quotes the matched phrase, which dateparser returns with its
-    # surrounding words ("at 7pm tomorrow"), not just the clock time
-    assert '"' in text and "7pm" in text
-
-
-def test_gate_hit_with_nothing_to_convert_stays_quiet():
-    # "in 5 minutes" trips the regex gate but is under the minimum lead, so
-    # extract_times finds nothing and a tz-known user gets no noisy reply
-    cog = make_cog(tz_name="Europe/London")
-    msg = make_message("leaving in 5 minutes")
-    run(cog.on_message(msg))
     msg.reply.assert_not_called()
-
-
-def test_stated_zone_skips_the_database_entirely():
-    # "22:00 CET" needs nobody's registered zone, so it must not nag
-    cog = make_cog(tz_name=None)
-    msg = make_message("22:00 CET tomorrow works for me")
-    run(cog.on_message(msg))
-    msg.reply.assert_called_once()
-    assert "<t:" in reply_text(msg)
     cog.bot.db.get_timezone.assert_not_called()
-
-
-def test_prompt_still_fires_when_no_zone_is_stated():
-    cog = make_cog(tz_name=None)
-    msg = make_message("22:00 tomorrow works for me")
-    run(cog.on_message(msg))
-    assert "/tz" in reply_text(msg)
 
 
 def test_render_plain_match():
@@ -294,12 +229,9 @@ def test_a_nudge_with_nothing_to_point_at_says_so():
     chatter.reply.assert_not_called()
 
 
-def test_a_nudge_prompts_the_author_for_a_zone_even_inside_the_cooldown():
+def test_a_nudge_prompts_the_author_for_a_zone():
     cog = make_cog(tz_name=None)
     first = make_message("i was up until 7am", message_id=10)
-    run(cog.on_message(first))
-    first.reply.assert_not_called()  # past tense, the listener stays quiet
-    cog.last_prompted[first.author.id] = 1e12  # as if nagged a moment ago
     nudge = make_message("scarlet?", author_id=2, message_id=100)
     nudge.channel = make_channel([first])
     run(cog.on_message(nudge))

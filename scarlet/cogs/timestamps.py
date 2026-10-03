@@ -8,7 +8,6 @@ the Discord side and the per-user timezone registry.
 
 import logging
 import re
-import time
 from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo, available_timezones
 
@@ -21,13 +20,9 @@ from ..timeparse import (
     TimeMatch,
     explicit_zone,
     extract_times,
-    live_times,
 )
 
 log = logging.getLogger(__name__)
-
-# seconds between "set your timezone" nags per user
-PROMPT_COOLDOWN = 3600
 
 # how far back a nudge looks for the message it is about. Long enough to
 # reach past a couple of replies to the one she ignored, short enough that
@@ -123,7 +118,6 @@ class Timestamps(commands.Cog):
         self.bot = bot
         self.zones = sorted(available_timezones())
         self.zone_set = set(self.zones)
-        self.last_prompted: dict[int, float] = {}
 
     @commands.Cog.listener()
     async def on_message(self, message: discord.Message) -> None:
@@ -132,57 +126,6 @@ class Timestamps(commands.Cog):
         if is_nudge(message.content, self.bot.user in message.mentions):
             await self._nudged(message)
             return
-        # cheap gate so most messages never touch the db
-        if "<t:" in message.content or not TIME_OF_DAY.search(message.content):
-            return
-        live = live_times(message.content)
-        if not live:
-            log.info(
-                "time in %r from %s is already over, staying quiet",
-                message.content,
-                message.author.id,
-            )
-            return
-        match = live[0]
-
-        # a message that names its own zone ("22:00 CET") reads the same for
-        # everyone, so it converts without knowing who wrote it
-        # past the gate is where the interesting decisions start, so from
-        # here on every path says what it did. A message reaching this point
-        # and producing no reply is the shape of the fault that is hard to
-        # see from outside: nothing is wrong, she just says nothing
-        log.info("time-ish message from %s: %r", message.author.id, message.content)
-
-        stated = explicit_zone(message.content)
-        if stated is None:
-            tz_name = await self.bot.db.get_timezone(message.author.id)
-            if tz_name is None:
-                await self._prompt_for_timezone(message, match.group(0))
-                return
-            zone = ZoneInfo(tz_name)
-        else:
-            zone = stated.tz
-
-        matches = extract_times(message.content, zone)
-        if not matches:
-            # handlers run as concurrent tasks, so two people talking at once
-            # interleave these lines. Every one of them names the author
-            log.info(
-                "nothing convertible for %s, staying quiet "
-                "(raise LOG_LEVEL to DEBUG for the reason)",
-                message.author.id,
-            )
-            return
-        log.info(
-            "converting %s for %s",
-            [m.phrase for m in matches],
-            message.author.id,
-        )
-        await message.reply(
-            _render(matches),
-            mention_author=False,
-            allowed_mentions=discord.AllowedMentions.none(),
-        )
 
     async def _nudged(self, nudge: discord.Message) -> None:
         """Convert the latest time-ish message she has not answered.
@@ -237,16 +180,14 @@ class Timestamps(commands.Cog):
             tz_name = await self.bot.db.get_timezone(message.author.id)
             if tz_name is None:
                 await self._prompt_for_timezone(
-                    message, TIME_OF_DAY.search(message.content).group(0), force=True
+                    message, TIME_OF_DAY.search(message.content).group(0)
                 )
                 return
             zone = ZoneInfo(tz_name)
         else:
             zone = stated.tz
 
-        matches = extract_times(
-            message.content, zone, min_lead=ASKED_MIN_LEAD, skip_past=False
-        )
+        matches = extract_times(message.content, zone, min_lead=ASKED_MIN_LEAD)
         if not matches:
             log.info("nudged, but could not place %r", message.content)
             await nudge.reply(
@@ -262,19 +203,7 @@ class Timestamps(commands.Cog):
             allowed_mentions=discord.AllowedMentions.none(),
         )
 
-    async def _prompt_for_timezone(
-        self, message: discord.Message, phrase: str, *, force: bool = False
-    ) -> None:
-        now = time.monotonic()
-        last = self.last_prompted.get(message.author.id)
-        if not force and last is not None and now - last < PROMPT_COOLDOWN:
-            log.info(
-                "%s has no timezone set, already nagged %.0fs ago",
-                message.author.id,
-                now - last,
-            )
-            return
-        self.last_prompted[message.author.id] = now
+    async def _prompt_for_timezone(self, message: discord.Message, phrase: str) -> None:
         log.info("%s has no timezone set, asking them to /tz", message.author.id)
         # reply() pings the author by default, which is wanted here
         await message.reply(
@@ -358,7 +287,6 @@ class Timestamps(commands.Cog):
             zone,
             min_lead=ASKED_MIN_LEAD,
             max_matches=ASKED_MAX_MATCHES,
-            skip_past=False,
         )
         if not matches:
             log.info("could not place %r for %s", when, interaction.user.id)
