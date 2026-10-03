@@ -41,6 +41,11 @@ NUDGE = re.compile(
     """,
     re.IGNORECASE | re.VERBOSE,
 )
+# what she says when a time was seen but the parser could not resolve it
+CANNOT_PLACE = (
+    "I see a time in there but I can't place it, sorry. Try /time with just that bit."
+)
+
 # a user or role mention token, stripped before the text is read
 MENTION = re.compile(r"<@[!&]?\d+>")
 
@@ -123,17 +128,31 @@ class Timestamps(commands.Cog):
     async def on_message(self, message: discord.Message) -> None:
         if message.author.bot or not message.content:
             return
-        if is_nudge(message.content, self.bot.user in message.mentions):
+        mentioned = self.bot.user in message.mentions
+        if is_nudge(message.content, mentioned):
             await self._nudged(message)
             return
+        if mentioned and TIME_OF_DAY.search(message.content):
+            await self._mentioned(message)
+
+    async def _mentioned(self, message: discord.Message) -> None:
+        """Convert the message she was @mentioned in."""
+        log.info("mentioned by %s in %r", message.author.id, message.content)
+        # the token is blanked, not cut, so phrase positions still line up
+        # with the message and it can never end up inside a quoted phrase
+        text = MENTION.sub(lambda m: " " * len(m.group(0)), message.content)
+        matches = await self._convert(message, text)
+        if matches == []:
+            await message.reply(
+                CANNOT_PLACE,
+                mention_author=False,
+            )
 
     async def _nudged(self, nudge: discord.Message) -> None:
         """Convert the latest time-ish message she has not answered.
 
         Someone saying her name is the strongest signal there is that a
-        conversion is wanted, so nothing that keeps her quiet on the
-        listener path applies: not the past-tense filter, not the lead
-        time, not the prompt cooldown.
+        conversion is wanted, so the lead-time floor does not apply.
         """
         log.info("nudged by %s in %s", nudge.author.id, nudge.channel.id)
         answered: set[int] = set()
@@ -175,33 +194,50 @@ class Timestamps(commands.Cog):
             return
 
         log.info("nudge points at %r from %s", message.content, message.author.id)
-        stated = explicit_zone(message.content)
+        matches = await self._convert(message, message.content)
+        if matches == []:
+            await nudge.reply(
+                CANNOT_PLACE,
+                mention_author=False,
+            )
+
+    async def _convert(
+        self, message: discord.Message, text: str
+    ) -> list[TimeMatch] | None:
+        """Convert text as its author wrote it, replying on message.
+
+        text is the message content, possibly with tokens blanked out; the
+        zone is the one stated in it or the author's registered one. Every
+        caller here is acting on an explicit ask, so the lead-time floor
+        is off.
+
+        Returns the matches posted, [] when a time was seen but could not
+        be placed (the caller says so where it makes sense), or None when
+        the author has no zone and has just been prompted for one.
+        """
+        stated = explicit_zone(text)
         if stated is None:
             tz_name = await self.bot.db.get_timezone(message.author.id)
             if tz_name is None:
                 await self._prompt_for_timezone(
-                    message, TIME_OF_DAY.search(message.content).group(0)
+                    message, TIME_OF_DAY.search(text).group(0)
                 )
-                return
+                return None
             zone = ZoneInfo(tz_name)
         else:
             zone = stated.tz
 
-        matches = extract_times(message.content, zone, min_lead=ASKED_MIN_LEAD)
+        matches = extract_times(text, zone, min_lead=ASKED_MIN_LEAD)
         if not matches:
-            log.info("nudged, but could not place %r", message.content)
-            await nudge.reply(
-                "I see a time in there but I can't place it, sorry. "
-                "Try /time with just that bit.",
-                mention_author=False,
-            )
-            return
-        log.info("converting %s on a nudge", [m.phrase for m in matches])
+            log.info("could not place %r for %s", text, message.author.id)
+            return []
+        log.info("converting %s for %s", [m.phrase for m in matches], message.author.id)
         await message.reply(
             _render(matches),
             mention_author=False,
             allowed_mentions=discord.AllowedMentions.none(),
         )
+        return matches
 
     async def _prompt_for_timezone(self, message: discord.Message, phrase: str) -> None:
         log.info("%s has no timezone set, asking them to /tz", message.author.id)

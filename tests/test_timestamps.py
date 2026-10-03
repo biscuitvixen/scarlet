@@ -1,6 +1,6 @@
 import asyncio
 from datetime import datetime
-from unittest.mock import AsyncMock, Mock
+from unittest.mock import AsyncMock, Mock, patch
 from zoneinfo import ZoneInfo
 
 import pytest
@@ -237,3 +237,51 @@ def test_a_nudge_prompts_the_author_for_a_zone():
     run(cog.on_message(nudge))
     first.reply.assert_called_once()
     assert "/tz" in reply_text(first), "a nudge should re-ask for the zone"
+
+
+# @mentioning her in a message with a time converts that message
+
+
+def mention_message(content, tz_name="Europe/London", author_id=1):
+    cog = make_cog(tz_name=tz_name)
+    msg = make_message(content, author_id=author_id, mentions=[cog.bot.user])
+    run(cog.on_message(msg))
+    return msg
+
+
+def test_a_mention_with_a_time_converts_that_message():
+    msg = mention_message("<@999> raid at 8pm?")
+    text = reply_text(msg)
+    assert "<t:" in text, "a mention is an ask"
+    assert '"at 8pm"' in text, f"the quote should be the author's words, got {text!r}"
+
+
+def test_the_mention_token_never_lands_in_the_quote():
+    msg = mention_message("8pm <@999>")
+    assert "<@" not in reply_text(msg), "the token is blanked before parsing"
+
+
+def test_a_mention_from_someone_with_no_zone_asks_for_one():
+    msg = mention_message("<@999> 8pm?", tz_name=None)
+    assert "/tz" in reply_text(msg), "no zone, so the prompt"
+
+
+def test_a_mention_with_a_stated_zone_needs_no_database():
+    msg = mention_message("<@999> 22:00 CET", tz_name=None)
+    assert "<t:" in reply_text(msg)
+
+
+def test_a_mention_without_a_time_is_left_alone():
+    msg = mention_message("<@999> you about?")
+    msg.reply.assert_not_called()
+
+
+def test_a_mention_with_a_time_she_cannot_place_says_so():
+    # "in 5 minutes" passes the gate; a zero lead time means it converts,
+    # so a time that fails is a bare "noon" from a zone the parser rejects.
+    # Easier to force the parser's hand through the mocked zone lookup
+    cog = make_cog(tz_name="Europe/London")
+    msg = make_message("<@999> noon", mentions=[cog.bot.user])
+    with patch("scarlet.cogs.timestamps.extract_times", return_value=[]):
+        run(cog.on_message(msg))
+    assert "/time" in reply_text(msg), "a failed parse should point at /time"
