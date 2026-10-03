@@ -8,7 +8,7 @@ the Discord side and the per-user timezone registry.
 
 import logging
 import re
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, tzinfo
 from zoneinfo import ZoneInfo, available_timezones
 
 import discord
@@ -41,6 +41,9 @@ NUDGE = re.compile(
     """,
     re.IGNORECASE | re.VERBOSE,
 )
+# the message context-menu entry, under Apps when right-clicking a message
+CONVERT_MENU = "Convert times"
+
 # what she says when a time was seen but the parser could not resolve it
 CANNOT_PLACE = (
     "I see a time in there but I can't place it, sorry. Try /time with just that bit."
@@ -123,6 +126,20 @@ class Timestamps(commands.Cog):
         self.bot = bot
         self.zones = sorted(available_timezones())
         self.zone_set = set(self.zones)
+        # a context menu cannot be declared as a cog method the way a slash
+        # command can, so it is built here and put on the tree by cog_load
+        self.convert_menu = app_commands.ContextMenu(
+            name=CONVERT_MENU, callback=self._convert_menu
+        )
+        self.convert_menu.guild_only = True
+
+    async def cog_load(self) -> None:
+        self.bot.tree.add_command(self.convert_menu)
+
+    async def cog_unload(self) -> None:
+        self.bot.tree.remove_command(
+            self.convert_menu.name, type=self.convert_menu.type
+        )
 
     @commands.Cog.listener()
     async def on_message(self, message: discord.Message) -> None:
@@ -206,27 +223,34 @@ class Timestamps(commands.Cog):
     ) -> list[TimeMatch] | None:
         """Convert text as its author wrote it, replying on message.
 
-        text is the message content, possibly with tokens blanked out; the
-        zone is the one stated in it or the author's registered one. Every
-        caller here is acting on an explicit ask, so the lead-time floor
-        is off.
-
+        text is the message content, possibly with tokens blanked out.
         Returns the matches posted, [] when a time was seen but could not
         be placed (the caller says so where it makes sense), or None when
         the author has no zone and has just been prompted for one.
         """
-        stated = explicit_zone(text)
-        if stated is None:
-            tz_name = await self.bot.db.get_timezone(message.author.id)
-            if tz_name is None:
-                await self._prompt_for_timezone(
-                    message, TIME_OF_DAY.search(text).group(0)
-                )
-                return None
-            zone = ZoneInfo(tz_name)
-        else:
-            zone = stated.tz
+        zone = await self._zone_for(message, text)
+        if zone is None:
+            await self._prompt_for_timezone(message, TIME_OF_DAY.search(text).group(0))
+            return None
+        return await self._post(message, text, zone)
 
+    async def _zone_for(self, message: discord.Message, text: str) -> tzinfo | None:
+        """The zone text reads in: stated in it, else the author's on file."""
+        stated = explicit_zone(text)
+        if stated is not None:
+            return stated.tz
+        tz_name = await self.bot.db.get_timezone(message.author.id)
+        return ZoneInfo(tz_name) if tz_name else None
+
+    async def _post(
+        self, message: discord.Message, text: str, zone: tzinfo
+    ) -> list[TimeMatch]:
+        """Convert text in zone and reply on message with the result.
+
+        Every caller here is acting on an explicit ask, so the lead-time
+        floor is off. Returns the matches posted, [] when nothing could
+        be placed and so nothing was posted.
+        """
         matches = extract_times(text, zone, min_lead=ASKED_MIN_LEAD)
         if not matches:
             log.info("could not place %r for %s", text, message.author.id)
@@ -238,6 +262,55 @@ class Timestamps(commands.Cog):
             allowed_mentions=discord.AllowedMentions.none(),
         )
         return matches
+
+    async def _convert_menu(
+        self, interaction: discord.Interaction, message: discord.Message
+    ) -> None:
+        """Apps > Convert times on any message.
+
+        The conversion is public, a reply on the message itself, since the
+        point of a timestamp is that everyone reads it in their own zone.
+        Everything else is said privately to whoever asked: there is no
+        time in it, its author has no zone yet, or she cannot post there.
+        The author is never pinged on someone else's behalf.
+        """
+        log.info(
+            "%s asked to convert %r from %s",
+            interaction.user.id,
+            message.content,
+            message.author.id,
+        )
+        if not message.content or not TIME_OF_DAY.search(message.content):
+            await interaction.response.send_message(
+                "I don't see a time in that message. Something like 21:00, "
+                "8pm friday or 22:00 CET is what I look for.",
+                ephemeral=True,
+            )
+            return
+        zone = await self._zone_for(message, message.content)
+        if zone is None:
+            await interaction.response.send_message(
+                f"I don't know {message.author.display_name}'s timezone, so I "
+                "can't place that. They can set it with /tz, or you can convert "
+                "it yourself with /time if you know the zone.",
+                ephemeral=True,
+            )
+            return
+        try:
+            matches = await self._post(message, message.content, zone)
+        except discord.Forbidden:
+            await interaction.response.send_message(
+                "I can't post in that channel. I need View Channel, Send "
+                "Messages and Read Message History there.",
+                ephemeral=True,
+            )
+            return
+        if not matches:
+            await interaction.response.send_message(CANNOT_PLACE, ephemeral=True)
+            return
+        await interaction.response.send_message(
+            f"Done, {len(matches)} converted under their message.", ephemeral=True
+        )
 
     async def _prompt_for_timezone(self, message: discord.Message, phrase: str) -> None:
         log.info("%s has no timezone set, asking them to /tz", message.author.id)

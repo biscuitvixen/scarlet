@@ -3,10 +3,12 @@ from datetime import datetime
 from unittest.mock import AsyncMock, Mock, patch
 from zoneinfo import ZoneInfo
 
+import discord
 import pytest
 
 from scarlet.cogs.timestamps import (
     ASKED_MIN_LEAD,
+    CONVERT_MENU,
     DEFAULT_STYLES,
     TIMESTAMP_STYLES,
     Timestamps,
@@ -285,3 +287,69 @@ def test_a_mention_with_a_time_she_cannot_place_says_so():
     with patch("scarlet.cogs.timestamps.extract_times", return_value=[]):
         run(cog.on_message(msg))
     assert "/time" in reply_text(msg), "a failed parse should point at /time"
+
+
+# Apps > Convert times on a message
+
+
+def make_interaction(user_id=2):
+    interaction = Mock()
+    interaction.user.id = user_id
+    interaction.response.send_message = AsyncMock()
+    return interaction
+
+
+def menu_on(content, tz_name="Europe/London", author_id=1):
+    cog = make_cog(tz_name=tz_name)
+    msg = make_message(content, author_id=author_id)
+    msg.author.display_name = "Ferris"
+    interaction = make_interaction()
+    run(cog._convert_menu(interaction, msg))
+    return msg, interaction.response.send_message
+
+
+def test_the_menu_is_put_on_the_tree_when_the_cog_loads():
+    cog = make_cog()
+    run(cog.cog_load())
+    cog.bot.tree.add_command.assert_called_once_with(cog.convert_menu)
+    assert cog.convert_menu.name == CONVERT_MENU
+    assert cog.convert_menu.guild_only, "no DMs, like the slash commands"
+    run(cog.cog_unload())
+    cog.bot.tree.remove_command.assert_called_once()
+
+
+def test_the_menu_converts_publicly_and_confirms_privately():
+    msg, sent = menu_on("raid at 8pm?")
+    assert "<t:" in reply_text(msg), "the conversion sits on the message"
+    assert sent.call_args.kwargs["ephemeral"], "the confirmation is private"
+    assert "Done" in sent.call_args.args[0]
+
+
+def test_the_menu_on_a_message_without_a_time_says_so_privately():
+    msg, sent = menu_on("you about?")
+    msg.reply.assert_not_called()
+    assert sent.call_args.kwargs["ephemeral"]
+    assert "don't see a time" in sent.call_args.args[0]
+
+
+def test_the_menu_names_the_author_when_they_have_no_zone():
+    msg, sent = menu_on("raid at 8pm?", tz_name=None)
+    msg.reply.assert_not_called()  # the author is not pinged on someone else's ask
+    assert sent.call_args.kwargs["ephemeral"]
+    assert "Ferris" in sent.call_args.args[0] and "/tz" in sent.call_args.args[0]
+
+
+def test_the_menu_uses_a_stated_zone_without_the_database():
+    msg, _ = menu_on("22:00 CET", tz_name=None)
+    assert "<t:" in reply_text(msg)
+
+
+def test_the_menu_reports_a_channel_it_cannot_post_in():
+    cog = make_cog(tz_name="Europe/London")
+    msg = make_message("raid at 8pm?")
+    msg.reply = AsyncMock(side_effect=discord.Forbidden(Mock(status=403), "no"))
+    interaction = make_interaction()
+    run(cog._convert_menu(interaction, msg))
+    sent = interaction.response.send_message
+    assert sent.call_args.kwargs["ephemeral"]
+    assert "can't post" in sent.call_args.args[0]
