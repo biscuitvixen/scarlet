@@ -54,6 +54,14 @@ TIME_OF_DAY = re.compile(
     re.IGNORECASE | re.VERBOSE,
 )
 
+# A time the author has marked for conversion by putting "!" directly in
+# front of it: "!8pm", "!21:30", "!noon". The same forms as TIME_OF_DAY,
+# so anything she can read can be marked; a space after the "!" is not a
+# marker, that is just an exclamation
+MARKED_TIME = re.compile(
+    r"!(?:" + TIME_OF_DAY.pattern + r")", re.IGNORECASE | re.VERBOSE
+)
+
 # Compact 24h time ("1900") is only trusted with context ("at 1900",
 # "1900hrs"), a bare 4-digit number is usually a year or just a number.
 # dateparser reads "1900" as a year too, so rewrite to 19:00 before parsing.
@@ -205,6 +213,23 @@ def _next_occurrence(when: datetime, now: datetime, tz: tzinfo) -> datetime:
         # month-end fault above, so say when the workaround earns its keep
         log.debug("placed bare time on %s, dateparser said %s", placed, when)
     return placed
+
+
+def marked_only(text: str) -> str | None:
+    """text with only its marked times left readable, or None if none are.
+
+    Unmarked times are blanked to spaces of the same length, so the
+    author's "we were up until 3am, !8pm tonight" converts just the 8pm,
+    and the "!" is dropped from the marked ones so the quoted phrase
+    reads as the time itself.
+    """
+    marked = {(m.start() + 1, m.end()) for m in MARKED_TIME.finditer(text)}
+    if not marked:
+        return None
+    text = TIME_OF_DAY.sub(
+        lambda m: m.group(0) if m.span() in marked else " " * len(m.group(0)), text
+    )
+    return MARKED_TIME.sub(lambda m: m.group(0)[1:], text)
 
 
 def explicit_zone(text: str) -> StatedZone | None:

@@ -20,6 +20,7 @@ from ..timeparse import (
     TimeMatch,
     explicit_zone,
     extract_times,
+    marked_only,
 )
 
 log = logging.getLogger(__name__)
@@ -151,6 +152,12 @@ class Timestamps(commands.Cog):
             return
         if mentioned and TIME_OF_DAY.search(message.content):
             await self._mentioned(message)
+            return
+        marked = marked_only(message.content)
+        if marked is not None:
+            log.info("%s marked a time in %r", message.author.id, message.content)
+            if await self._convert(message, marked) == []:
+                await message.reply(CANNOT_PLACE, mention_author=False)
 
     async def _mentioned(self, message: discord.Message) -> None:
         """Convert the message she was @mentioned in."""

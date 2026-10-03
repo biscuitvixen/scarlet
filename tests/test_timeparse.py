@@ -3,7 +3,13 @@ from zoneinfo import ZoneInfo
 
 import pytest
 
-from scarlet.timeparse import TIME_OF_DAY, explicit_zone, extract_times
+from scarlet.timeparse import (
+    MARKED_TIME,
+    TIME_OF_DAY,
+    explicit_zone,
+    extract_times,
+    marked_only,
+)
 
 LONDON = ZoneInfo("Europe/London")
 CHICAGO = ZoneInfo("America/Chicago")
@@ -372,3 +378,30 @@ def test_a_spaced_meridiem_is_a_time_not_a_month():
     assert int(m.when.timestamp()) == unix(2026, 7, 2, 11, 0), (
         "11 am should be tomorrow morning, not November"
     )
+
+
+# a "!" directly before a time marks it for conversion
+@pytest.mark.parametrize(
+    "text", ["!8pm", "raid at !21:30", "!noon tomorrow", "!at 1900", "!in 20 minutes"]
+)
+def test_a_bang_before_a_time_marks_it(text):
+    assert MARKED_TIME.search(text), f"{text!r} should carry a marked time"
+
+
+@pytest.mark.parametrize("text", ["! 8pm", "!8", "8pm!", "wow!", "!friday"])
+def test_a_bang_elsewhere_is_just_an_exclamation(text):
+    assert not MARKED_TIME.search(text), f"{text!r} has no marked time"
+    assert marked_only(text) is None
+
+
+def test_only_the_marked_time_is_left_for_the_parser():
+    text = marked_only("we were up until 3am, !8pm tonight")
+    assert text == "we were up until    , 8pm tonight"
+    (m,) = extract_times(text, LONDON, NOW)
+    assert m.phrase == "8pm", "the quote should not carry the marker"
+    assert int(m.when.timestamp()) == unix(2026, 7, 1, 20, 0)
+
+
+def test_every_marked_time_converts():
+    text = marked_only("!7pm or !8pm?")
+    assert [m.phrase for m in extract_times(text, LONDON, NOW)] == ["7pm", "8pm"]

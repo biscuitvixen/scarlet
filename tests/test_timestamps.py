@@ -353,3 +353,38 @@ def test_the_menu_reports_a_channel_it_cannot_post_in():
     sent = interaction.response.send_message
     assert sent.call_args.kwargs["ephemeral"]
     assert "can't post" in sent.call_args.args[0]
+
+
+# a "!" directly before a time in a message is an ask
+
+
+def test_a_marked_time_converts_without_a_mention():
+    cog = make_cog(tz_name="Europe/London")
+    msg = make_message("raid at !8pm?")
+    run(cog.on_message(msg))
+    text = reply_text(msg)
+    assert "<t:" in text
+    quote = text.split(" is ")[0]
+    assert quote == '"at 8pm"', f"the quote should not carry the marker, got {quote!r}"
+
+
+def test_an_unmarked_time_beside_a_marked_one_is_left_alone():
+    cog = make_cog(tz_name="Europe/London")
+    msg = make_message("we were up until 3am, !8pm tonight")
+    run(cog.on_message(msg))
+    assert reply_text(msg).count("<t:") == 2, "one phrase: absolute plus relative"
+    assert "3am" not in reply_text(msg)
+
+
+def test_a_marked_time_from_someone_with_no_zone_asks_for_one():
+    cog = make_cog(tz_name=None)
+    msg = make_message("!8pm?")
+    run(cog.on_message(msg))
+    assert '"8pm"' in reply_text(msg) and "/tz" in reply_text(msg)
+
+
+def test_a_bang_that_is_not_on_a_time_stays_silent():
+    cog = make_cog(tz_name="Europe/London")
+    msg = make_message("8pm! lets go!")
+    run(cog.on_message(msg))
+    msg.reply.assert_not_called()
