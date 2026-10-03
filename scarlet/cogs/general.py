@@ -22,10 +22,13 @@ class General(commands.Cog):
         embed.add_field(
             name="Timestamps",
             value=(
-                "`/tz` to set your timezone, then I'll turn times like "
-                '"friday at 7pm" into everyone\'s own local time. '
-                "`/time 21:00` if you'd rather ask me outright, or "
-                "`/timecode 21:00` to get the markup to paste yourself. "
+                "`/tz` to set your timezone, then ask me to convert a time and "
+                "everyone sees it in their own zone. Ask by @mentioning me in "
+                "the message, putting a `!` right before the time (`!8pm`), "
+                "right-clicking a message for Apps > Convert times, or just "
+                'saying "Scarlet?" after a time I didn\'t catch. '
+                "`/time 21:00` converts a phrase of your own, and "
+                "`/timecode 21:00` gets you the markup to paste yourself. "
                 'Saying the zone ("22:00 CET") works without a `/tz`.'
             ),
             inline=False,

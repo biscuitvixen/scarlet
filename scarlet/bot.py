@@ -25,7 +25,10 @@ class Scarlet(commands.Bot):
     def __init__(self, settings: Settings):
         intents = discord.Intents.default()
         intents.message_content = True
-        super().__init__(command_prefix="!", intents=intents)
+        # she has no prefix commands, only slash commands and listeners, so
+        # the prefix is mention-only: anything else would turn "!8pm", the
+        # inline convert marker, into a command lookup that fails
+        super().__init__(command_prefix=commands.when_mentioned, intents=intents)
         self.settings = settings
         self.db: Database | None = None
         self.lavalink_task: asyncio.Task | None = None
