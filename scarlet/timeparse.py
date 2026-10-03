@@ -15,6 +15,7 @@ from datetime import datetime, timedelta, timezone, tzinfo
 from typing import NamedTuple
 from zoneinfo import ZoneInfo
 
+import dateparser
 from dateparser.search import search_dates
 
 # Everything here logs at DEBUG. Dropping a phrase is the normal outcome,
@@ -52,6 +53,26 @@ TIME_OF_DAY = re.compile(
     """,
     re.IGNORECASE | re.VERBOSE,
 )
+
+# A time is read as already over when one of these sits within PAST_NEAR
+# characters of it. Bare "until" is left out on purpose: "on until 9pm" is
+# a running event and converting its end still helps, so "until" only
+# counts with a past-tense verb or "up" in front of it
+PAST_MARKER = re.compile(
+    r"""
+      \b(?:was|were|been|stayed|up)\b[^.!?\n]{0,15}?\b(?:until|till|til)\b
+    | \b(?:last\s+night|yesterday|this\s+morning|earlier|ago)\b
+    | \b(?:woke(?:\s+up)?|slept|went\s+to\s+(?:bed|sleep)|got\s+(?:up|home|in|back)
+         |crashed|finished|ended|arrived|left)\b
+    """,
+    re.IGNORECASE | re.VERBOSE,
+)
+# how far a past marker may sit from a time and still be about it, in
+# characters. Covers "up until 3:30" and "3:30 last night" with a couple of
+# filler words, but not a marker at the other end of a long message
+PAST_NEAR = 24
+# punctuation a past marker does not reach across
+CLAUSE_BREAK = re.compile(r"[,.;!?\n]")
 
 # Compact 24h time ("1900") is only trusted with context ("at 1900",
 # "1900hrs"), a bare 4-digit number is usually a year or just a number.
@@ -127,9 +148,25 @@ ZONE_NEAR = 4
 
 MAX_MATCHES = 3
 
+# dateparser's search_dates runs a phrase on into the next word when that
+# word could start another date expression, so "11 am and he's" comes back
+# as "11 am and". The datetime is right, only the quoted text is off, so
+# these are cut from the ends before the phrase is shown to anyone
+PHRASE_JUNK_TAIL = re.compile(r"(?:\s+(?:and|or|then|but|so|nd))+$", re.IGNORECASE)
+# "hop on at 8pm" comes back as "on at 8pm", the "on" belonging to "hop on"
+PHRASE_JUNK_HEAD = re.compile(r"^on\s+(?=at\b)", re.IGNORECASE)
+
 # anything closer than this is happening "now-ish" for everyone in the
 # conversation, converting it just adds noise
 MIN_LEAD = timedelta(hours=1)
+
+
+def _trim_phrase(phrase: str) -> str:
+    """Cut the words dateparser tacked on that are not part of the time."""
+    trimmed = PHRASE_JUNK_HEAD.sub("", PHRASE_JUNK_TAIL.sub("", phrase.strip()))
+    if trimmed != phrase.strip():
+        log.debug("trimmed %r to %r", phrase, trimmed)
+    return trimmed
 
 
 def _brief(pairs) -> str:
@@ -190,6 +227,40 @@ def _next_occurrence(when: datetime, now: datetime, tz: tzinfo) -> datetime:
     return placed
 
 
+def live_times(text: str) -> list[re.Match]:
+    """The time-of-day matches in text that are not beside a past marker.
+
+    This is the listener's gate: a message whose only times are already
+    over ("we were up until 3:30 last night") should earn neither a
+    conversion nor a prompt to set a timezone. A direct ask should not go
+    through it, the person asking knows what they want converted.
+    """
+    past = [m.span() for m in PAST_MARKER.finditer(text)]
+
+    def beside(t: re.Match) -> str | None:
+        # a marker claims only the nearest time on either side of it: the
+        # gap between them must be short, hold no other time, and not cross
+        # a clause boundary, so "up until 3am, lets do 8pm" keeps the 8pm
+        for ps, pe in past:
+            gap = text[pe : t.start()] if pe <= t.start() else text[t.end() : ps]
+            if (
+                len(gap) <= PAST_NEAR
+                and not CLAUSE_BREAK.search(gap)
+                and not TIME_OF_DAY.search(gap)
+            ):
+                return text[ps:pe]
+        return None
+
+    live = []
+    for t in TIME_OF_DAY.finditer(text):
+        marker = beside(t)
+        if marker is None:
+            live.append(t)
+        else:
+            log.debug("dropped %r, beside %r so already over", t.group(0), marker)
+    return live
+
+
 def explicit_zone(text: str) -> StatedZone | None:
     """Return the timezone a message states for its own times, if any.
 
@@ -214,9 +285,7 @@ def explicit_zone(text: str) -> StatedZone | None:
         if beside_a_time(*m.span()):
             sign, hours, minutes = m.groups()
             delta = timedelta(hours=int(hours), minutes=int(minutes or 0))
-            return StatedZone(
-                m.group(0), timezone(-delta if sign == "-" else delta)
-            )
+            return StatedZone(m.group(0), timezone(-delta if sign == "-" else delta))
 
     for m in ZONE_NAME.finditer(text):
         if beside_a_time(*m.span()):
@@ -231,6 +300,7 @@ def extract_times(
     *,
     min_lead: timedelta = MIN_LEAD,
     max_matches: int = MAX_MATCHES,
+    skip_past: bool = True,
 ) -> list[TimeMatch]:
     """Return up to max_matches concrete times found in text.
 
@@ -243,6 +313,9 @@ def extract_times(
     a channel is unsolicited; someone who asked outright should pass a
     zero min_lead, they know what they want converted.
 
+    skip_past leaves out times that read as already over (see
+    live_times). Off for a direct ask, for the same reason as the limits.
+
     now anchors relative phrases ("in 45 minutes") and future preference,
     mainly so tests can pin it. Defaults to the current time.
     """
@@ -252,6 +325,17 @@ def extract_times(
     if not TIME_OF_DAY.search(text):
         log.debug("no time of day in %r", text)
         return []
+    if skip_past:
+        keep = {m.span() for m in live_times(text)}
+        if not keep:
+            log.debug("every time in %r is already over", text)
+            return []
+        # blank the past ones so neither the relative pass nor dateparser
+        # sees them. Same length, so spans stay valid against the original
+        text = TIME_OF_DAY.sub(
+            lambda m: m.group(0) if m.span() in keep else " " * len(m.group(0)),
+            text,
+        )
 
     # a zone the author spelled out beats the one they registered, that is
     # the whole point of typing it
@@ -323,8 +407,10 @@ def extract_times(
     def relative(m: re.Match) -> str:
         amount = int(m.group(1))
         unit = m.group(2).lower()
-        delta = timedelta(hours=amount) if unit.startswith("h") else timedelta(
-            minutes=amount
+        delta = (
+            timedelta(hours=amount)
+            if unit.startswith("h")
+            else timedelta(minutes=amount)
         )
         when = now + delta
         unix = int(when.timestamp())
@@ -343,25 +429,23 @@ def extract_times(
         # time converted to UTC against RELATIVE_BASE, so the base must be
         # naive UTC (its own default), not wall-clock in the target zone
         base = now.astimezone(timezone.utc).replace(tzinfo=None)
-        found = search_dates(
-            text,
-            languages=["en"],
-            settings={
-                "PREFER_DATES_FROM": "future",
-                "RETURN_AS_TIMEZONE_AWARE": True,
-                "TIMEZONE": str(tz),
-                "RELATIVE_BASE": base,
-                # search_dates runs full-text language detection first and
-                # drops the message outright if it can't name a language.
-                # A message that is only a time ("7pm", "21:00?") has no
-                # detectable language, and the languages= list above is only
-                # consulted as a fallback when it holds more than one entry,
-                # so those never reached the parser at all. This is the
-                # documented way to say "assume English when unsure".
-                "DEFAULT_LANGUAGES": ["en"],
-            },
-        )
+        settings = {
+            "PREFER_DATES_FROM": "future",
+            "RETURN_AS_TIMEZONE_AWARE": True,
+            "TIMEZONE": str(tz),
+            "RELATIVE_BASE": base,
+            # search_dates runs full-text language detection first and
+            # drops the message outright if it can't name a language.
+            # A message that is only a time ("7pm", "21:00?") has no
+            # detectable language, and the languages= list above is only
+            # consulted as a fallback when it holds more than one entry,
+            # so those never reached the parser at all. This is the
+            # documented way to say "assume English when unsure".
+            "DEFAULT_LANGUAGES": ["en"],
+        }
+        found = search_dates(text, languages=["en"], settings=settings)
     else:
+        settings = {}
         found = None
     # the parser's raw answer, before any of our filtering. This is the line
     # that says whether she went quiet because nothing was said or because
@@ -375,7 +459,18 @@ def extract_times(
         if len(matches) == max_matches:
             log.debug("hit the %d match cap, ignoring the rest", max_matches)
             break
-        phrase = phrase.strip()
+        phrase = _trim_phrase(phrase)
+        # search_dates only locates the phrase. Its value comes from the
+        # plain parser, which reads the trimmed phrase on its own: the
+        # search path reads a spaced "11 am" as the first of November, and
+        # a trailing conjunction can push a time to midnight
+        reread = dateparser.parse(phrase, languages=["en"], settings=settings)
+        if reread is None:
+            log.debug("dropped %r, does not parse on its own", phrase)
+            continue
+        if reread != when:
+            log.debug("reread %r as %s, search had %s", phrase, reread, when)
+        when = reread
         start = text.find(phrase, cursor)
         if start >= 0:
             cursor = start + len(phrase)

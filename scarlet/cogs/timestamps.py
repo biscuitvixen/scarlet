@@ -7,6 +7,7 @@ the Discord side and the per-user timezone registry.
 """
 
 import logging
+import re
 import time
 from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo, available_timezones
@@ -15,12 +16,38 @@ import discord
 from discord import app_commands
 from discord.ext import commands
 
-from ..timeparse import TIME_OF_DAY, TimeMatch, explicit_zone, extract_times
+from ..timeparse import (
+    TIME_OF_DAY,
+    TimeMatch,
+    explicit_zone,
+    extract_times,
+    live_times,
+)
 
 log = logging.getLogger(__name__)
 
 # seconds between "set your timezone" nags per user
 PROMPT_COOLDOWN = 3600
+
+# how far back a nudge looks for the message it is about. Long enough to
+# reach past a couple of replies to the one she ignored, short enough that
+# she never digs up something from an hour ago
+HISTORY_LINES = 8
+
+# a message that is her name and nothing much else: "Scarlet?", "hey
+# scarlett convert that", "scarlet pls". A mention of her with no other
+# words counts too, that check is on the message, not the text
+NUDGE = re.compile(
+    r"""
+    ^\W*(?:(?:hey|hi|oi|yo|ok|okay|uh|um|erm)\W+)?
+    scarlett?
+    (?:\W+(?:convert|time|times|please|pls|plz|that|this|it|one|again))*
+    \W*$
+    """,
+    re.IGNORECASE | re.VERBOSE,
+)
+# a user or role mention token, stripped before the text is read
+MENTION = re.compile(r"<@[!&]?\d+>")
 
 # /time was asked a direct question, so the quiet-hour rule that keeps her
 # from butting in over an imminent time does not apply
@@ -29,6 +56,18 @@ ASKED_MIN_LEAD = timedelta(0)
 # the reply still has to fit in a Discord message and stay readable, so the
 # cap is raised rather than lifted
 ASKED_MAX_MATCHES = 10
+
+
+def is_nudge(content: str, mentioned: bool) -> bool:
+    """Whether a message is someone calling her name and no more.
+
+    mentioned says her user was @mentioned; the token itself is stripped
+    before the text is read, so "@Scarlet ?" and "scarlet?" read the same.
+    """
+    text = MENTION.sub(" ", content).strip()
+    if mentioned and not re.search(r"\w", text):
+        return True
+    return bool(NUDGE.match(text))
 
 
 def _render(matches: list[TimeMatch]) -> str:
@@ -90,10 +129,21 @@ class Timestamps(commands.Cog):
     async def on_message(self, message: discord.Message) -> None:
         if message.author.bot or not message.content:
             return
-        # cheap gate so most messages never touch the db
-        match = TIME_OF_DAY.search(message.content)
-        if "<t:" in message.content or not match:
+        if is_nudge(message.content, self.bot.user in message.mentions):
+            await self._nudged(message)
             return
+        # cheap gate so most messages never touch the db
+        if "<t:" in message.content or not TIME_OF_DAY.search(message.content):
+            return
+        live = live_times(message.content)
+        if not live:
+            log.info(
+                "time in %r from %s is already over, staying quiet",
+                message.content,
+                message.author.id,
+            )
+            return
+        match = live[0]
 
         # a message that names its own zone ("22:00 CET") reads the same for
         # everyone, so it converts without knowing who wrote it
@@ -134,10 +184,90 @@ class Timestamps(commands.Cog):
             allowed_mentions=discord.AllowedMentions.none(),
         )
 
-    async def _prompt_for_timezone(self, message: discord.Message, phrase: str) -> None:
+    async def _nudged(self, nudge: discord.Message) -> None:
+        """Convert the latest time-ish message she has not answered.
+
+        Someone saying her name is the strongest signal there is that a
+        conversion is wanted, so nothing that keeps her quiet on the
+        listener path applies: not the past-tense filter, not the lead
+        time, not the prompt cooldown.
+        """
+        log.info("nudged by %s in %s", nudge.author.id, nudge.channel.id)
+        answered: set[int] = set()
+        candidates: list[discord.Message] = []
+        try:
+            async for earlier in nudge.channel.history(
+                limit=HISTORY_LINES, before=nudge
+            ):
+                if earlier.author.id == self.bot.user.id:
+                    if earlier.reference and earlier.reference.message_id:
+                        answered.add(earlier.reference.message_id)
+                elif not earlier.author.bot and earlier.content:
+                    candidates.append(earlier)
+        except discord.Forbidden:
+            log.warning(
+                "cannot read history in %s, the nudge needs Read Message History",
+                nudge.channel.id,
+            )
+            await nudge.reply(
+                "I can't read back through this channel, so I don't know what "
+                "you mean. I need the Read Message History permission here.",
+                mention_author=False,
+            )
+            return
+
+        # history arrives newest first, so the first hit is the latest one
+        for message in candidates:
+            if message.id in answered or "<t:" in message.content:
+                continue
+            if TIME_OF_DAY.search(message.content):
+                break
+        else:
+            log.info("nothing time-ish in the last %d messages", HISTORY_LINES)
+            await nudge.reply(
+                "I don't see a time in the last few messages. Try /time with "
+                "the bit you want converted.",
+                mention_author=False,
+            )
+            return
+
+        log.info("nudge points at %r from %s", message.content, message.author.id)
+        stated = explicit_zone(message.content)
+        if stated is None:
+            tz_name = await self.bot.db.get_timezone(message.author.id)
+            if tz_name is None:
+                await self._prompt_for_timezone(
+                    message, TIME_OF_DAY.search(message.content).group(0), force=True
+                )
+                return
+            zone = ZoneInfo(tz_name)
+        else:
+            zone = stated.tz
+
+        matches = extract_times(
+            message.content, zone, min_lead=ASKED_MIN_LEAD, skip_past=False
+        )
+        if not matches:
+            log.info("nudged, but could not place %r", message.content)
+            await nudge.reply(
+                "I see a time in there but I can't place it, sorry. "
+                "Try /time with just that bit.",
+                mention_author=False,
+            )
+            return
+        log.info("converting %s on a nudge", [m.phrase for m in matches])
+        await message.reply(
+            _render(matches),
+            mention_author=False,
+            allowed_mentions=discord.AllowedMentions.none(),
+        )
+
+    async def _prompt_for_timezone(
+        self, message: discord.Message, phrase: str, *, force: bool = False
+    ) -> None:
         now = time.monotonic()
         last = self.last_prompted.get(message.author.id)
-        if last is not None and now - last < PROMPT_COOLDOWN:
+        if not force and last is not None and now - last < PROMPT_COOLDOWN:
             log.info(
                 "%s has no timezone set, already nagged %.0fs ago",
                 message.author.id,
@@ -228,6 +358,7 @@ class Timestamps(commands.Cog):
             zone,
             min_lead=ASKED_MIN_LEAD,
             max_matches=ASKED_MAX_MATCHES,
+            skip_past=False,
         )
         if not matches:
             log.info("could not place %r for %s", when, interaction.user.id)
