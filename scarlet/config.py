@@ -10,6 +10,8 @@ class Settings(BaseSettings):
     """
 
     discord_token: str
+    # development only: commands sync to this guild instantly, and the
+    # global scope is emptied on login, so other servers lose them
     guild_id: int | None = None
 
     # a blank line in .env ("GUILD_ID=") should mean unset, not crash

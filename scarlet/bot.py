@@ -32,6 +32,8 @@ class Scarlet(commands.Bot):
         self.settings = settings
         self.db: Database | None = None
         self.lavalink_task: asyncio.Task | None = None
+        # on_ready fires again on every gateway resume, the sweep is once
+        self.scopes_swept = False
         self.version = describe(package_version(), settings.git_sha, settings.git_date)
         # the profile names the commit only; the date is for whoever asks
         self.build = describe(package_version(), settings.git_sha)
@@ -92,6 +94,37 @@ class Scarlet(commands.Bot):
             "logged in as %s (%s), running %s", self.user, self.user.id, self.version
         )
         await self._update_about()
+        if not self.scopes_swept:
+            self.scopes_swept = True
+            await self._sweep_stale_commands()
+
+    async def _sweep_stale_commands(self) -> None:
+        """Empty the command scope the current settings do not use.
+
+        Discord keeps global and per-guild command registries apart, and a
+        sync only ever replaces the one it is aimed at. A guild that was
+        synced under GUILD_ID keeps those copies after GUILD_ID is blanked
+        and the global set is synced, and shows every command twice. The
+        sweep sends an empty list to the other scope, so the registered
+        state after any login follows the current settings alone.
+
+        The raw endpoints are used rather than clearing the local tree,
+        which is what she dispatches from. Needs the guild list, so it
+        runs from on_ready rather than setup_hook.
+        """
+        app_id = self.application_id
+        if self.settings.guild_id:
+            await self.http.bulk_upsert_global_commands(app_id, [])
+            log.info("GUILD_ID is set, cleared the global command scope")
+            return
+        for guild in self.guilds:
+            try:
+                await self.http.bulk_upsert_guild_commands(app_id, guild.id, [])
+            except discord.Forbidden:
+                # invited without applications.commands there; nothing of
+                # hers can be registered in that guild either way
+                log.warning("cannot touch commands in guild %s", guild.id)
+        log.info("cleared guild command scopes in %d guilds", len(self.guilds))
 
     async def _update_about(self) -> None:
         """Put the running build under the tagline on her profile.

@@ -186,31 +186,17 @@ guild the bot is in, but changes can take up to an hour to appear) and **per-gui
 (one guild, updates instantly). The bot chooses based on `GUILD_ID` in `.env`:
 
 - `GUILD_ID` blank: syncs globally.
-- `GUILD_ID=<id>`: syncs to that one guild, handy for instant iteration while developing.
+- `GUILD_ID=<id>`: syncs to that one guild, handy for instant iteration while developing. Development only: with it set she empties her global commands on login, so every other server she is in loses them. Leave it blank in production.
 
-Gotcha: if you sync globally and *then* set `GUILD_ID`, that guild ends up with **both**
-copies and shows every command twice. Blanking `GUILD_ID` again stops the bot re-adding
-the guild copy, but the commands already sitting in the guild registry stay until you
-wipe them. To clear one guild's scope (global commands are left alone), run this against
-the running bot container, which already has `DISCORD_TOKEN` in its environment:
-
-```sh
-docker compose exec -T bot python - <GUILD_ID> <<'PY'
-import asyncio, os, sys, discord
-
-async def main(guild_id):
-    client = discord.Client(intents=discord.Intents.none())
-    await client.login(os.environ["DISCORD_TOKEN"])
-    app = await client.application_info()
-    await client.http.bulk_upsert_guild_commands(app.id, guild_id, [])
-    await client.close()
-    print(f"cleared guild-scoped commands for {guild_id}")
-
-asyncio.run(main(int(sys.argv[1])))
-PY
-```
-
-Then leave `GUILD_ID` blank so it stays clean.
+A sync only ever replaces the scope it is aimed at, so without further
+care a guild synced under `GUILD_ID` during development would keep
+those copies after `GUILD_ID` is blanked, and show every command twice
+beside the global set. She prevents that on login: whichever scope the
+current `.env` does not use is sent an empty list, the global scope
+when `GUILD_ID` is set, and the guild scope of every server she is in
+when it is blank. The registered commands after any restart therefore
+follow the current setting alone, and a guild showing duplicates is
+cleaned by the next restart.
 
 ## Running her locally
 
