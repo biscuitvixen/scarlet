@@ -221,16 +221,22 @@ Tests need nothing running at all:
 .venv/bin/python -m pytest
 ```
 
-### What version am I running
+### What build am I running
 
-`/version` answers with `<version> (<commit>)`, privately, and only for
-people with Manage Server. It is the same line she writes to the startup
-log. Nothing about the build shows on her profile or her status.
+She says so on her profile: the About Me is the tagline from
+`BOT_ABOUT` with "Running `<commit>`" underneath, rewritten once at
+login when it has changed. Edit the tagline in `.env`, not on Discord,
+or the next login puts it back. `/version` answers with the commit and
+its date, privately, for people with Manage Server, and that is the
+line she writes to the startup log.
 
-The version comes from the project metadata; the commit is baked into
-the image at build time from `GIT_SHA`, which CI fills in from the commit
-being built. The published images also carry it in their OCI labels, so
-`docker inspect` answers the same question without Discord:
+There is no release number on show. The one in `pyproject.toml` is a
+compatibility claim that a bot changing every week never earns a bump
+for, so the build is named by its commit and the commit's date, which
+need no decision from anyone. Both are baked into the image at build
+time from `GIT_SHA` and `GIT_DATE`, which CI fills in from the commit
+being built. The published images also carry the commit in their OCI
+labels, so `docker inspect` answers the same question without Discord:
 
 ```sh
 docker inspect --format \
@@ -238,16 +244,13 @@ docker inspect --format \
   ghcr.io/<owner>/scarlet:latest
 ```
 
-Running from a checkout nothing sets it, so pass it yourself if you want
-the commit named:
+Running from a checkout nothing sets them, and she falls back to the
+package version so the line is never blank. Pass them yourself if you
+want the commit named:
 
 ```sh
-export GIT_SHA=$(git rev-parse HEAD)
+export GIT_SHA=$(git rev-parse HEAD) GIT_DATE=$(git log -1 --format=%cs)
 ```
-
-One thing catches people out locally: the version is read from the
-*installed* package, so bumping it in `pyproject.toml` changes nothing
-until `pip install -e .` runs again and rewrites the metadata.
 
 ## CI
 

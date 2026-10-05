@@ -7,7 +7,7 @@ from discord.ext import commands
 
 from .config import Settings
 from .db import Database
-from .version import describe, package_version
+from .version import about_text, describe, package_version
 
 log = logging.getLogger(__name__)
 
@@ -29,7 +29,9 @@ class Scarlet(commands.Bot):
         self.settings = settings
         self.db: Database | None = None
         self.lavalink_task: asyncio.Task | None = None
-        self.version = describe(package_version(), settings.git_sha)
+        self.version = describe(package_version(), settings.git_sha, settings.git_date)
+        # the profile names the commit only; the date is for whoever asks
+        self.build = describe(package_version(), settings.git_sha)
 
     async def setup_hook(self) -> None:
         self.db = await Database.open(self.settings.db_path)
@@ -86,6 +88,25 @@ class Scarlet(commands.Bot):
         log.info(
             "logged in as %s (%s), running %s", self.user, self.user.id, self.version
         )
+        await self._update_about()
+
+    async def _update_about(self) -> None:
+        """Put the running build under the tagline on her profile.
+
+        One edit per login, and only when the text has changed, so a
+        restart loop does not hammer the application endpoint.
+        """
+        wanted = about_text(self.settings.bot_about, self.build)
+        try:
+            info = await self.application_info()
+            if info.description == wanted:
+                return
+            await info.edit(description=wanted)
+        except discord.HTTPException as exc:
+            # the profile is cosmetic, a failed edit must not take her down
+            log.warning("could not update the About Me (%s), carrying on", exc)
+            return
+        log.info("profile now says: running %s", self.build)
 
     async def close(self) -> None:
         if self.lavalink_task is not None:

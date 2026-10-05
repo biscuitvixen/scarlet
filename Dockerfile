@@ -21,7 +21,8 @@ USER scarlet
 # invalidates every layer below it, and the sha changes on every commit
 # while the dependency install above it almost never does.
 ARG GIT_SHA=""
-ENV GIT_SHA=$GIT_SHA
+ARG GIT_DATE=""
+ENV GIT_SHA=$GIT_SHA GIT_DATE=$GIT_DATE
 
 # healthy == connected to the gateway. the Health cog stamps a heartbeat file
 # while the bot is ready; this fails once it goes stale. start-period covers

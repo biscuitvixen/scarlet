@@ -36,6 +36,12 @@ class Settings(BaseSettings):
 
     db_path: str = "/app/data/scarlet.db"
 
-    # the commit the image was built from, baked in by the Dockerfile. empty
-    # running from a checkout, where you already know what you are running
+    # the commit the image was built from and its date, baked in by the
+    # Dockerfile. empty running from a checkout, where you already know what
+    # you are running
     git_sha: str = ""
+    git_date: str = ""
+
+    # the first line of her profile. the build goes underneath it at login,
+    # so the whole About Me is owned here and never only on Discord
+    bot_about: str = "I may not be real - but I am still fluffy!"

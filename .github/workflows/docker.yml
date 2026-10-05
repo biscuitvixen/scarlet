@@ -15,6 +15,11 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      # The date of the commit being built, for the build string she shows
+      # on her profile. A sha means nothing to a person reading it.
+      - id: commit
+        run: echo "date=$(git log -1 --format=%cs)" >> "$GITHUB_OUTPUT"
+
       # arm64 build for the DGX Spark, amd64 for everything else.
       # QEMU lets this amd64 runner emulate arm64 so we can build both from one job.
       - uses: docker/setup-qemu-action@v3
@@ -52,6 +57,7 @@ jobs:
           # anyone who only has the bot.
           build-args: |
             GIT_SHA=${{ github.sha }}
+            GIT_DATE=${{ steps.commit.outputs.date }}
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
           # Persist Docker layers in the GitHub Actions cache so unchanged layers
