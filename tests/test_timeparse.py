@@ -3,7 +3,13 @@ from zoneinfo import ZoneInfo
 
 import pytest
 
-from scarlet.timeparse import TIME_OF_DAY, explicit_zone, extract_times, live_times
+from scarlet.timeparse import (
+    MARKED_TIME,
+    TIME_OF_DAY,
+    explicit_zone,
+    extract_times,
+    marked_only,
+)
 
 LONDON = ZoneInfo("Europe/London")
 CHICAGO = ZoneInfo("America/Chicago")
@@ -340,59 +346,6 @@ def test_a_meridiem_hour_is_not_found_inside_a_longer_number():
     assert not TIME_OF_DAY.search("18pm"), "a run of digits should not be split"
 
 
-# Times that are already over are not plans. Each of these came from a real
-# chat where she converted the time anyway, or nagged someone for a zone
-@pytest.mark.parametrize(
-    "text",
-    [
-        "lmao we were up until 3:30 last night, i think it's a chill day",
-        "i was up until 7am xP",
-        "my mate was up until 11 am and he's not even tired",
-        "last night at 3:30 we finally stopped",
-        "woke up at 7am",
-        "got home at 11pm",
-        "finished at 5pm today",
-    ],
-)
-def test_a_time_that_is_already_over_is_not_converted(text):
-    assert not live_times(text), f"{text!r} should be read as already over"
-    assert extract_times(text, LONDON, NOW) == [], (
-        f"{text!r} should not convert while skip_past is on"
-    )
-
-
-@pytest.mark.parametrize(
-    "text",
-    [
-        "we were up until 3am, lets do 8pm tonight",
-        "we were up until 3am so lets do 8pm tonight",
-        "woke up at 7am, raid at 8pm",
-    ],
-)
-def test_a_past_marker_only_claims_the_time_beside_it(text):
-    assert [m.group(0) for m in live_times(text)] == ["8pm"], (
-        f"only the 8pm in {text!r} is still to come"
-    )
-    (m,) = extract_times(text, LONDON, NOW)
-    assert int(m.when.timestamp()) == unix(2026, 7, 1, 20, 0), (
-        f"the 8pm in {text!r} should still convert"
-    )
-
-
-# a running event, or one that has not started, is worth converting even
-# though "until" is in the sentence
-@pytest.mark.parametrize("text", ["stream is on until 9pm", "not until 9pm"])
-def test_until_without_a_past_verb_is_still_live(text):
-    assert [m.group(0) for m in live_times(text)] == ["9pm"], (
-        f"{text!r} is not over yet"
-    )
-
-
-def test_a_direct_ask_can_still_convert_a_past_time():
-    (m,) = extract_times("we were up until 3am", LONDON, NOW, skip_past=False)
-    assert m.phrase == "3am", "skip_past=False should hand back the past time"
-
-
 # dateparser runs a phrase on into a following conjunction, and the quoted
 # text is what people see, so it has to read as what they wrote
 @pytest.mark.parametrize(
@@ -406,7 +359,7 @@ def test_a_direct_ask_can_still_convert_a_past_time():
     ],
 )
 def test_the_quoted_phrase_stops_at_the_time(text, phrase, day, hour):
-    (m,) = extract_times(text, LONDON, NOW, skip_past=False)
+    (m,) = extract_times(text, LONDON, NOW)
     assert m.phrase == phrase, f"{text!r} should quote {phrase!r}, got {m.phrase!r}"
     assert int(m.when.timestamp()) == unix(2026, 7, day, hour, 0), (
         f"trimming must not move the time for {text!r}"
@@ -425,3 +378,30 @@ def test_a_spaced_meridiem_is_a_time_not_a_month():
     assert int(m.when.timestamp()) == unix(2026, 7, 2, 11, 0), (
         "11 am should be tomorrow morning, not November"
     )
+
+
+# a "!" directly before a time marks it for conversion
+@pytest.mark.parametrize(
+    "text", ["!8pm", "raid at !21:30", "!noon tomorrow", "!at 1900", "!in 20 minutes"]
+)
+def test_a_bang_before_a_time_marks_it(text):
+    assert MARKED_TIME.search(text), f"{text!r} should carry a marked time"
+
+
+@pytest.mark.parametrize("text", ["! 8pm", "!8", "8pm!", "wow!", "!friday"])
+def test_a_bang_elsewhere_is_just_an_exclamation(text):
+    assert not MARKED_TIME.search(text), f"{text!r} has no marked time"
+    assert marked_only(text) is None
+
+
+def test_only_the_marked_time_is_left_for_the_parser():
+    text = marked_only("we were up until 3am, !8pm tonight")
+    assert text == "we were up until    , 8pm tonight"
+    (m,) = extract_times(text, LONDON, NOW)
+    assert m.phrase == "8pm", "the quote should not carry the marker"
+    assert int(m.when.timestamp()) == unix(2026, 7, 1, 20, 0)
+
+
+def test_every_marked_time_converts():
+    text = marked_only("!7pm or !8pm?")
+    assert [m.phrase for m in extract_times(text, LONDON, NOW)] == ["7pm", "8pm"]

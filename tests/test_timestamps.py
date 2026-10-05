@@ -1,12 +1,14 @@
 import asyncio
 from datetime import datetime
-from unittest.mock import AsyncMock, Mock
+from unittest.mock import AsyncMock, Mock, patch
 from zoneinfo import ZoneInfo
 
+import discord
 import pytest
 
 from scarlet.cogs.timestamps import (
     ASKED_MIN_LEAD,
+    CONVERT_MENU,
     DEFAULT_STYLES,
     TIMESTAMP_STYLES,
     Timestamps,
@@ -73,42 +75,6 @@ def reply_text(message):
     return message.reply.call_args.args[0]
 
 
-def test_prompt_quotes_the_matched_phrase():
-    # the message that started all this: a bare "noon" with no tz on file
-    cog = make_cog(tz_name=None)
-    msg = make_message("I had shawarma for breakfast at noon, walked back")
-    run(cog.on_message(msg))
-    msg.reply.assert_called_once()
-    text = reply_text(msg)
-    assert '"noon"' in text
-    assert "/tz" in text
-
-
-def test_prompt_preserves_original_casing():
-    cog = make_cog(tz_name=None)
-    msg = make_message("lunch at NOON tomorrow")
-    run(cog.on_message(msg))
-    assert '"NOON"' in reply_text(msg)
-
-
-def test_prompt_quotes_a_clock_time():
-    cog = make_cog(tz_name=None)
-    msg = make_message("dinner at 7:30 pm sound good?")
-    run(cog.on_message(msg))
-    assert '"7:30 pm"' in reply_text(msg)
-
-
-def test_prompt_is_rate_limited_per_user():
-    cog = make_cog(tz_name=None)
-    first = make_message("noon", author_id=5)
-    second = make_message("midnight", author_id=5)
-    run(cog.on_message(first))
-    run(cog.on_message(second))
-    first.reply.assert_called_once()
-    # inside PROMPT_COOLDOWN, the second mention stays quiet
-    second.reply.assert_not_called()
-
-
 def test_bot_messages_are_ignored():
     cog = make_cog(tz_name=None)
     msg = make_message("meet at 7pm", is_bot=True)
@@ -132,42 +98,13 @@ def test_preformatted_timestamp_is_ignored():
     msg.reply.assert_not_called()
 
 
-def test_known_timezone_replies_with_conversion():
+def test_a_plain_message_with_a_time_in_it_gets_no_reply():
+    # the users asked for this: she converts only when called
     cog = make_cog(tz_name="Europe/London")
     msg = make_message("dinner at 7pm tomorrow")
     run(cog.on_message(msg))
-    msg.reply.assert_called_once()
-    text = reply_text(msg)
-    assert "<t:" in text
-    # the reply quotes the matched phrase, which dateparser returns with its
-    # surrounding words ("at 7pm tomorrow"), not just the clock time
-    assert '"' in text and "7pm" in text
-
-
-def test_gate_hit_with_nothing_to_convert_stays_quiet():
-    # "in 5 minutes" trips the regex gate but is under the minimum lead, so
-    # extract_times finds nothing and a tz-known user gets no noisy reply
-    cog = make_cog(tz_name="Europe/London")
-    msg = make_message("leaving in 5 minutes")
-    run(cog.on_message(msg))
     msg.reply.assert_not_called()
-
-
-def test_stated_zone_skips_the_database_entirely():
-    # "22:00 CET" needs nobody's registered zone, so it must not nag
-    cog = make_cog(tz_name=None)
-    msg = make_message("22:00 CET tomorrow works for me")
-    run(cog.on_message(msg))
-    msg.reply.assert_called_once()
-    assert "<t:" in reply_text(msg)
     cog.bot.db.get_timezone.assert_not_called()
-
-
-def test_prompt_still_fires_when_no_zone_is_stated():
-    cog = make_cog(tz_name=None)
-    msg = make_message("22:00 tomorrow works for me")
-    run(cog.on_message(msg))
-    assert "/tz" in reply_text(msg)
 
 
 def test_render_plain_match():
@@ -294,14 +231,160 @@ def test_a_nudge_with_nothing_to_point_at_says_so():
     chatter.reply.assert_not_called()
 
 
-def test_a_nudge_prompts_the_author_for_a_zone_even_inside_the_cooldown():
+def test_a_nudge_prompts_the_author_for_a_zone():
     cog = make_cog(tz_name=None)
     first = make_message("i was up until 7am", message_id=10)
-    run(cog.on_message(first))
-    first.reply.assert_not_called()  # past tense, the listener stays quiet
-    cog.last_prompted[first.author.id] = 1e12  # as if nagged a moment ago
     nudge = make_message("scarlet?", author_id=2, message_id=100)
     nudge.channel = make_channel([first])
     run(cog.on_message(nudge))
     first.reply.assert_called_once()
     assert "/tz" in reply_text(first), "a nudge should re-ask for the zone"
+
+
+# @mentioning her in a message with a time converts that message
+
+
+def mention_message(content, tz_name="Europe/London", author_id=1):
+    cog = make_cog(tz_name=tz_name)
+    msg = make_message(content, author_id=author_id, mentions=[cog.bot.user])
+    run(cog.on_message(msg))
+    return msg
+
+
+def test_a_mention_with_a_time_converts_that_message():
+    msg = mention_message("<@999> raid at 8pm?")
+    text = reply_text(msg)
+    assert "<t:" in text, "a mention is an ask"
+    assert '"at 8pm"' in text, f"the quote should be the author's words, got {text!r}"
+
+
+def test_the_mention_token_never_lands_in_the_quote():
+    msg = mention_message("8pm <@999>")
+    assert "<@" not in reply_text(msg), "the token is blanked before parsing"
+
+
+def test_a_mention_from_someone_with_no_zone_asks_for_one():
+    msg = mention_message("<@999> 8pm?", tz_name=None)
+    assert "/tz" in reply_text(msg), "no zone, so the prompt"
+
+
+def test_a_mention_with_a_stated_zone_needs_no_database():
+    msg = mention_message("<@999> 22:00 CET", tz_name=None)
+    assert "<t:" in reply_text(msg)
+
+
+def test_a_mention_without_a_time_is_left_alone():
+    msg = mention_message("<@999> you about?")
+    msg.reply.assert_not_called()
+
+
+def test_a_mention_with_a_time_she_cannot_place_says_so():
+    # "in 5 minutes" passes the gate; a zero lead time means it converts,
+    # so a time that fails is a bare "noon" from a zone the parser rejects.
+    # Easier to force the parser's hand through the mocked zone lookup
+    cog = make_cog(tz_name="Europe/London")
+    msg = make_message("<@999> noon", mentions=[cog.bot.user])
+    with patch("scarlet.cogs.timestamps.extract_times", return_value=[]):
+        run(cog.on_message(msg))
+    assert "/time" in reply_text(msg), "a failed parse should point at /time"
+
+
+# Apps > Convert times on a message
+
+
+def make_interaction(user_id=2):
+    interaction = Mock()
+    interaction.user.id = user_id
+    interaction.response.send_message = AsyncMock()
+    return interaction
+
+
+def menu_on(content, tz_name="Europe/London", author_id=1):
+    cog = make_cog(tz_name=tz_name)
+    msg = make_message(content, author_id=author_id)
+    msg.author.display_name = "Ferris"
+    interaction = make_interaction()
+    run(cog._convert_menu(interaction, msg))
+    return msg, interaction.response.send_message
+
+
+def test_the_menu_is_put_on_the_tree_when_the_cog_loads():
+    cog = make_cog()
+    run(cog.cog_load())
+    cog.bot.tree.add_command.assert_called_once_with(cog.convert_menu)
+    assert cog.convert_menu.name == CONVERT_MENU
+    assert cog.convert_menu.guild_only, "no DMs, like the slash commands"
+    run(cog.cog_unload())
+    cog.bot.tree.remove_command.assert_called_once()
+
+
+def test_the_menu_converts_publicly_and_confirms_privately():
+    msg, sent = menu_on("raid at 8pm?")
+    assert "<t:" in reply_text(msg), "the conversion sits on the message"
+    assert sent.call_args.kwargs["ephemeral"], "the confirmation is private"
+    assert "Done" in sent.call_args.args[0]
+
+
+def test_the_menu_on_a_message_without_a_time_says_so_privately():
+    msg, sent = menu_on("you about?")
+    msg.reply.assert_not_called()
+    assert sent.call_args.kwargs["ephemeral"]
+    assert "don't see a time" in sent.call_args.args[0]
+
+
+def test_the_menu_names_the_author_when_they_have_no_zone():
+    msg, sent = menu_on("raid at 8pm?", tz_name=None)
+    msg.reply.assert_not_called()  # the author is not pinged on someone else's ask
+    assert sent.call_args.kwargs["ephemeral"]
+    assert "Ferris" in sent.call_args.args[0] and "/tz" in sent.call_args.args[0]
+
+
+def test_the_menu_uses_a_stated_zone_without_the_database():
+    msg, _ = menu_on("22:00 CET", tz_name=None)
+    assert "<t:" in reply_text(msg)
+
+
+def test_the_menu_reports_a_channel_it_cannot_post_in():
+    cog = make_cog(tz_name="Europe/London")
+    msg = make_message("raid at 8pm?")
+    msg.reply = AsyncMock(side_effect=discord.Forbidden(Mock(status=403), "no"))
+    interaction = make_interaction()
+    run(cog._convert_menu(interaction, msg))
+    sent = interaction.response.send_message
+    assert sent.call_args.kwargs["ephemeral"]
+    assert "can't post" in sent.call_args.args[0]
+
+
+# a "!" directly before a time in a message is an ask
+
+
+def test_a_marked_time_converts_without_a_mention():
+    cog = make_cog(tz_name="Europe/London")
+    msg = make_message("raid at !8pm?")
+    run(cog.on_message(msg))
+    text = reply_text(msg)
+    assert "<t:" in text
+    quote = text.split(" is ")[0]
+    assert quote == '"at 8pm"', f"the quote should not carry the marker, got {quote!r}"
+
+
+def test_an_unmarked_time_beside_a_marked_one_is_left_alone():
+    cog = make_cog(tz_name="Europe/London")
+    msg = make_message("we were up until 3am, !8pm tonight")
+    run(cog.on_message(msg))
+    assert reply_text(msg).count("<t:") == 2, "one phrase: absolute plus relative"
+    assert "3am" not in reply_text(msg)
+
+
+def test_a_marked_time_from_someone_with_no_zone_asks_for_one():
+    cog = make_cog(tz_name=None)
+    msg = make_message("!8pm?")
+    run(cog.on_message(msg))
+    assert '"8pm"' in reply_text(msg) and "/tz" in reply_text(msg)
+
+
+def test_a_bang_that_is_not_on_a_time_stays_silent():
+    cog = make_cog(tz_name="Europe/London")
+    msg = make_message("8pm! lets go!")
+    run(cog.on_message(msg))
+    msg.reply.assert_not_called()
